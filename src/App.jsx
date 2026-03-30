@@ -7,7 +7,8 @@ import {
   FileText, AlertCircle, Zap, Bot, Send, Loader2, Copy, ChevronLeft, ListTodo,
   UserCircle, Phone, Star, GripVertical, Search, CalendarClock, TrendingUp,
   ShieldAlert, History, Bell, CalendarCheck, ChevronUp, Filter, Download, TriangleAlert, LogOut,
-  GitBranch, Milestone, GanttChartSquare, AlertOctagon, Link2, Paperclip, Eye, Unlink
+  GitBranch, Milestone, GanttChartSquare, AlertOctagon, Link2, Paperclip, Eye, Unlink,
+  Lock, UserPlus, KeyRound, ShieldCheck
 } from "lucide-react";
 import { supabase, TABLE } from "./supabase.js";
 
@@ -2239,15 +2240,75 @@ function ReportsView({data}){const{projects,staff}=data;const actions=getAllActi
   </div>;
 }
 
-// ─── Staff ──────────────────────────────
-function StaffView({data,save,auditLog,user}){const{staff,projects}=data;const[edit,setEdit]=useState(null);const actions=getAllActions(projects);
+// ─── Staff (with admin account creation) ─
+function StaffView({data,save,auditLog,user}){const{staff,projects}=data;const[edit,setEdit]=useState(null);const[createAccount,setCreateAccount]=useState(null);const[accountMsg,setAccountMsg]=useState("");const[accountLoading,setAccountLoading]=useState(false);const actions=getAllActions(projects);
   const STAFF_COLORS = [T.accent, T.success, T.purple, T.warning, T.teal, T.pink, "#5856D6", "#64D2FF"];
   const sv=p=>{const i=staff.findIndex(s=>s.id===p.id);const isNew=i<0;let n;if(i>=0){n=[...staff];n[i]=p;}else n=[...staff,p];save({...data,staff:n});setEdit(null);
     if(auditLog&&user)auditLog.addLog(user.id,user.name,isNew?"create":"update","人员",p.name);};
+
+  // Admin creates Supabase Auth account for a staff member
+  const doCreateAccount = async () => {
+    if(!createAccount?.phone || !createAccount?.password || !createAccount?.name) return;
+    setAccountLoading(true); setAccountMsg("");
+    try {
+      const fakeEmail = `${createAccount.phone.trim()}@pmp.local`;
+      const staffId = createAccount.staffId || uid();
+      const isAdmin = createAccount.isAdmin || false;
+
+      // Create auth user via Edge Function (admin action)
+      const EDGE_FN_URL = `${import.meta.env.VITE_SUPABASE_URL || 'https://divinifsucffsxyiyypc.supabase.co'}/functions/v1/admin-create-user`;
+      const resp = await fetch(EDGE_FN_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
+        },
+        body: JSON.stringify({
+          email: fakeEmail,
+          password: createAccount.password,
+          name: createAccount.name.trim(),
+          phone: createAccount.phone.trim(),
+          staffId,
+          isAdmin,
+          role: createAccount.role || "普通员工",
+          color: createAccount.color || STAFF_COLORS[staff.length % STAFF_COLORS.length],
+        })
+      });
+      const result = await resp.json();
+      if (result.error) throw new Error(result.error);
+
+      // Also add/update in local staff array
+      const existingIdx = staff.findIndex(s => s.phone === createAccount.phone.trim());
+      const staffEntry = {
+        id: staffId,
+        name: createAccount.name.trim(),
+        phone: createAccount.phone.trim(),
+        role: createAccount.role || "普通员工",
+        isAdmin,
+        permission: isAdmin ? "admin" : "editor",
+        color: createAccount.color || STAFF_COLORS[staff.length % STAFF_COLORS.length],
+      };
+      let newStaff;
+      if (existingIdx >= 0) { newStaff = [...staff]; newStaff[existingIdx] = {...newStaff[existingIdx], ...staffEntry}; }
+      else newStaff = [...staff, staffEntry];
+      save({...data, staff: newStaff});
+
+      setAccountMsg("账号创建成功！");
+      if(auditLog&&user)auditLog.addLog(user.id,user.name,"create","账号",createAccount.name.trim());
+      setTimeout(()=>{setCreateAccount(null);setAccountMsg("");},1500);
+    } catch(e) {
+      setAccountMsg("创建失败: " + e.message);
+    }
+    setAccountLoading(false);
+  };
+
   return<div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22}}>
       <h2 style={{margin:0,fontSize:22,fontWeight:700,color:T.text1,display:"flex",alignItems:"center",gap:8}}><Users size={22}/> 人员管理</h2>
-      <Btn onClick={()=>setEdit({id:uid(),name:"",phone:"",role:"",isAdmin:false,color:T.accent})}><Plus size={14}/> 添加</Btn>
+      <div style={{display:"flex",gap:8}}>
+        <Btn v="secondary" onClick={()=>setCreateAccount({name:"",phone:"",password:"",role:"普通员工",isAdmin:false,color:STAFF_COLORS[staff.length%STAFF_COLORS.length]})}><KeyRound size={14}/> 创建账号</Btn>
+        <Btn onClick={()=>setEdit({id:uid(),name:"",phone:"",role:"",isAdmin:false,color:T.accent})}><Plus size={14}/> 添加</Btn>
+      </div>
     </div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:14}}>
       {staff.map(s=>{const sa=actions.filter(a=>a.staffId===s.id);return<Card key={s.id}>
@@ -2268,6 +2329,8 @@ function StaffView({data,save,auditLog,user}){const{staff,projects}=data;const[e
         </div>
       </Card>;})}
     </div>
+
+    {/* Edit staff modal */}
     <Modal open={!!edit} onClose={()=>setEdit(null)} title={edit?.name?"编辑人员":"添加人员"}>
       {edit&&<div>
         <QuickSelect label="颜色" options={STAFF_COLORS.map(c=>({v:c,l:<div style={{width:20,height:20,borderRadius:"50%",background:c}}/>}))} value={edit.color} onChange={v=>setEdit({...edit,color:v})}/>
@@ -2279,52 +2342,241 @@ function StaffView({data,save,auditLog,user}){const{staff,projects}=data;const[e
         <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><Btn v="secondary" onClick={()=>setEdit(null)}>取消</Btn><Btn onClick={()=>sv(edit)} disabled={!edit.name.trim()||!edit.phone.trim()}>保存</Btn></div>
       </div>}
     </Modal>
+
+    {/* Admin create account modal */}
+    <Modal open={!!createAccount} onClose={()=>{setCreateAccount(null);setAccountMsg("");}} title="创建系统账号" width={420}>
+      {createAccount&&<div>
+        <div style={{padding:"12px 16px",background:T.accentLight,borderRadius:T.radiusSm,marginBottom:16,fontSize:12,color:T.accent,display:"flex",alignItems:"center",gap:6}}>
+          <ShieldCheck size={14}/> 管理员为员工创建登录账号，创建后员工可用手机号+密码登录系统
+        </div>
+        <Input label="姓名" placeholder="员工姓名" value={createAccount.name} onChange={e=>setCreateAccount({...createAccount,name:e.target.value})}/>
+        <Input label="手机号" placeholder="11位手机号" value={createAccount.phone} onChange={e=>setCreateAccount({...createAccount,phone:e.target.value})}/>
+        <Input label="初始密码" placeholder="至少6位" type="password" value={createAccount.password} onChange={e=>setCreateAccount({...createAccount,password:e.target.value})}/>
+        <Input label="职位" placeholder="如：运营专员" value={createAccount.role} onChange={e=>setCreateAccount({...createAccount,role:e.target.value})}/>
+        <label style={{display:"flex",gap:8,marginBottom:16,fontSize:13,alignItems:"center",color:T.text2}}>
+          <input type="checkbox" checked={createAccount.isAdmin} onChange={e=>setCreateAccount({...createAccount,isAdmin:e.target.checked})} style={{accentColor:T.accent,width:16,height:16}}/>
+          设为超级管理员
+        </label>
+        {accountMsg&&<p style={{fontSize:12,margin:"-4px 0 12px",display:"flex",alignItems:"center",gap:4,color:accountMsg.includes("成功")?T.success:T.danger}}>
+          {accountMsg.includes("成功")?<CheckCircle2 size={12}/>:<AlertCircle size={12}/>} {accountMsg}
+        </p>}
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+          <Btn v="secondary" onClick={()=>{setCreateAccount(null);setAccountMsg("");}}>取消</Btn>
+          <Btn onClick={doCreateAccount} disabled={accountLoading||!createAccount.name.trim()||!createAccount.phone.trim()||!createAccount.password||createAccount.password.length<6}>
+            {accountLoading?<><Loader2 size={14} style={{animation:"spin 1s linear infinite"}}/> 创建中...</>:<><KeyRound size={14}/> 创建账号</>}
+          </Btn>
+        </div>
+      </div>}
+    </Modal>
   </div>;
 }
 
 // ═══════════════════════════════════════════
-// ─── LOGIN + ROUTER ───────────────────────
+// ─── LOGIN + REGISTER + ROUTER ────────────
 // ═══════════════════════════════════════════
-function LoginScreen({staff,onLogin}){const[phone,setPhone]=useState("");const[err,setErr]=useState("");
-  const go=()=>{const u=staff.find(s=>s.phone===phone.trim());u?onLogin(u):setErr("未找到该用户");};
-  return<div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:T.bg,fontFamily:T.font}}>
+function LoginScreen({onLogin}) {
+  const [mode, setMode] = useState("login"); // "login" | "register"
+  const [phone, setPhone] = useState("");
+  const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState("");
+
+  const clearErr = () => { setErr(""); setSuccess(""); };
+
+  const doLogin = async () => {
+    if (!phone.trim() || !password) { setErr("请输入手机号和密码"); return; }
+    setLoading(true); clearErr();
+    try {
+      const fakeEmail = `${phone.trim()}@pmp.local`;
+      const { data, error } = await supabase.auth.signInWithPassword({ email: fakeEmail, password });
+      if (error) {
+        if (error.message.includes("Invalid login")) setErr("手机号或密码错误");
+        else setErr(error.message);
+      } else if (data.user) {
+        // Fetch profile
+        const { data: profile } = await supabase.from("profiles").select("*").eq("id", data.user.id).single();
+        if (profile) onLogin(profile);
+        else setErr("用户资料未找到，请联系管理员");
+      }
+    } catch (e) { setErr("登录失败: " + e.message); }
+    setLoading(false);
+  };
+
+  const doRegister = async () => {
+    if (!phone.trim() || !password || !name.trim()) { setErr("请填写所有字段"); return; }
+    if (password.length < 6) { setErr("密码至少6位"); return; }
+    if (!/^1\d{10}$/.test(phone.trim())) { setErr("请输入正确的11位手机号"); return; }
+    setLoading(true); clearErr();
+    try {
+      const fakeEmail = `${phone.trim()}@pmp.local`;
+      // Check if phone already registered
+      const { data: existing } = await supabase.from("profiles").select("id").eq("phone", phone.trim()).maybeSingle();
+      if (existing) { setErr("该手机号已注册"); setLoading(false); return; }
+
+      const { data: authData, error: authErr } = await supabase.auth.signUp({
+        email: fakeEmail,
+        password,
+        options: { data: { name: name.trim(), phone: phone.trim() } }
+      });
+      if (authErr) { setErr(authErr.message); setLoading(false); return; }
+      if (authData.user) {
+        // Create profile
+        const { error: profErr } = await supabase.from("profiles").insert({
+          id: authData.user.id,
+          phone: phone.trim(),
+          name: name.trim(),
+          role: "普通员工",
+          is_admin: false,
+          staff_id: uid(),
+          color: PIE_COLORS[Math.floor(Math.random() * PIE_COLORS.length)]
+        });
+        if (profErr) console.error("Profile create error:", profErr);
+        setSuccess("注册成功！请登录");
+        setMode("login");
+        setPassword("");
+      }
+    } catch (e) { setErr("注册失败: " + e.message); }
+    setLoading(false);
+  };
+
+  const go = mode === "login" ? doLogin : doRegister;
+
+  return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:T.bg,fontFamily:T.font}}>
     <GlobalStyles/>
-    <div style={{background:T.card,borderRadius:20,padding:"48px 44px",width:380,boxShadow:"0 20px 60px rgba(0,0,0,0.08)",border:`1px solid ${T.borderLight}`}}>
-      <div style={{textAlign:"center",marginBottom:36}}>
+    <div style={{background:T.card,borderRadius:20,padding:"48px 44px",width:400,boxShadow:"0 20px 60px rgba(0,0,0,0.08)",border:`1px solid ${T.borderLight}`}}>
+      <div style={{textAlign:"center",marginBottom:32}}>
         <div style={{width:56,height:56,borderRadius:14,background:T.accent,display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:16,color:"#fff",boxShadow:`0 4px 16px ${T.accent}40`}}><Mountain size={28}/></div>
         <h1 style={{margin:0,fontSize:22,fontWeight:700,color:T.text1}}>第二座山集团</h1>
         <p style={{margin:"6px 0 0",fontSize:13,color:T.text3}}>新媒体运营管理系统</p>
       </div>
-      <Input label="手机号" placeholder="请输入手机号" value={phone} onChange={e=>{setPhone(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&go()}/>
-      {err&&<p style={{color:T.danger,fontSize:12,margin:"-6px 0 10px",display:"flex",alignItems:"center",gap:4}}><AlertCircle size={12}/> {err}</p>}
-      <Btn onClick={go} style={{width:"100%",padding:"11px 0",fontSize:14,borderRadius:10,justifyContent:"center"}}>登录</Btn>
-      <div style={{marginTop:24,padding:"14px 16px",background:T.borderLight,borderRadius:T.radius,fontSize:11,color:T.text3}}>
-        <div style={{fontWeight:600,marginBottom:6,color:T.text2}}>快速登录</div>
-        {staff.map(s=><div key={s.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0"}}>
-          <span style={{display:"flex",alignItems:"center",gap:6}}><Avatar name={s.name} color={s.color||T.accent} size={18}/> {s.name}（{s.role}）</span>
-          <span style={{color:T.accent,cursor:"pointer",fontWeight:600,transition:T.transition}} onClick={()=>setPhone(s.phone)}
-            onMouseEnter={e=>e.target.style.opacity="0.7"} onMouseLeave={e=>e.target.style.opacity="1"}>{s.phone}</span>
-        </div>)}
+
+      {/* Tab switch */}
+      <div style={{display:"flex",background:T.borderLight,borderRadius:10,padding:3,marginBottom:24}}>
+        {[["login","登录",Lock],["register","注册",UserPlus]].map(([m,l,Icon])=>
+          <button key={m} onClick={()=>{setMode(m);clearErr();}} style={{flex:1,padding:"9px 0",fontSize:13,fontWeight:mode===m?700:500,color:mode===m?T.text1:T.text3,background:mode===m?T.card:"transparent",border:"none",borderRadius:8,cursor:"pointer",transition:T.transition,display:"flex",alignItems:"center",justifyContent:"center",gap:5,boxShadow:mode===m?T.shadow:"none"}}>
+            <Icon size={14}/>{l}
+          </button>
+        )}
       </div>
+
+      {mode === "register" && <Input label="姓名" placeholder="请输入姓名" value={name} onChange={e=>{setName(e.target.value);clearErr();}}/>}
+      <Input label="手机号" placeholder="请输入11位手机号" value={phone} onChange={e=>{setPhone(e.target.value);clearErr();}}/>
+      <div style={{position:"relative"}}>
+        <Input label="密码" placeholder={mode==="register"?"设置密码（至少6位）":"请输入密码"} type="password" value={password}
+          onChange={e=>{setPassword(e.target.value);clearErr();}}
+          onKeyDown={e=>e.key==="Enter"&&go()}/>
+      </div>
+
+      {err && <p style={{color:T.danger,fontSize:12,margin:"-4px 0 12px",display:"flex",alignItems:"center",gap:4}}><AlertCircle size={12}/> {err}</p>}
+      {success && <p style={{color:T.success,fontSize:12,margin:"-4px 0 12px",display:"flex",alignItems:"center",gap:4}}><CheckCircle2 size={12}/> {success}</p>}
+
+      <Btn onClick={go} disabled={loading} style={{width:"100%",padding:"11px 0",fontSize:14,borderRadius:10,justifyContent:"center"}}>
+        {loading ? <><Loader2 size={16} style={{animation:"spin 1s linear infinite"}}/> 处理中...</> : mode==="login" ? <><Lock size={14}/> 登录</> : <><UserPlus size={14}/> 注册</>}
+      </Btn>
+
+      <p style={{textAlign:"center",marginTop:16,fontSize:12,color:T.text3}}>
+        {mode==="login" ? <>没有账号？<span style={{color:T.accent,cursor:"pointer",fontWeight:600}} onClick={()=>{setMode("register");clearErr();}}>立即注册</span></> : <>已有账号？<span style={{color:T.accent,cursor:"pointer",fontWeight:600}} onClick={()=>{setMode("login");clearErr();}}>返回登录</span></>}
+      </p>
     </div>
   </div>;
 }
 
-export default function App(){
-  const{data,save,loading,syncStatus}=useStorage();
-  const[user,setUser]=useState(null);
+export default function App() {
+  const { data, save, loading: dataLoading, syncStatus } = useStorage();
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const auditLog = useAuditLog();
   const taskInstancesHook = useTaskInstances();
 
-  if(loading||!data)return<div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:T.bg,fontFamily:T.font}}>
+  // Listen for Supabase Auth state changes
+  useEffect(() => {
+    // Check existing session
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      try {
+        if (session?.user) {
+          const { data: profile, error } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
+          if (profile && !error) setUser(profile);
+          else console.warn("Profile not found or error, showing login", error);
+        }
+      } catch (e) { console.error("Session check error:", e); }
+      setAuthLoading(false);
+    }).catch(() => setAuthLoading(false));
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === "SIGNED_OUT") setUser(null);
+      if (event === "SIGNED_IN" && session?.user) {
+        try {
+          const { data: profile, error } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
+          if (profile && !error) setUser(profile);
+        } catch (e) { console.error("Auth state change error:", e); }
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const onLogin = (profile) => setUser(profile);
+
+  const onLogout = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+  };
+
+  // ── Data filtering for non-admin users (must be before any conditional returns) ──
+  const filteredData = useMemo(() => {
+    if (!data || !user) return data;
+    if (user.is_admin) return data;
+    const myStaffId = user.staff_id;
+    if (!myStaffId) return { ...data, projects: [] };
+
+    const myProjects = (data.projects || []).map(p => {
+      const cats = (p.categories || []).map(c => {
+        const resources = (c.resources || []).filter(r =>
+          r.owner === myStaffId || (r.actions || []).some(a => a.staffId === myStaffId)
+        ).map(r => ({
+          ...r,
+          actions: (r.actions || []).filter(a => a.staffId === myStaffId)
+        }));
+        return resources.length > 0 ? { ...c, resources } : null;
+      }).filter(Boolean);
+      return cats.length > 0 ? { ...p, categories: cats } : null;
+    }).filter(Boolean);
+
+    return { ...data, projects: myProjects };
+  }, [data, user]);
+
+  // Bridge: sync profile to staff array if not present
+  useEffect(() => {
+    if (!data || !user) return;
+    const staffExists = (data.staff || []).some(s => s.id === user.staff_id || s.phone === user.phone);
+    if (!staffExists && user.staff_id) {
+      const newStaff = [...(data.staff || []), {
+        id: user.staff_id,
+        name: user.name,
+        phone: user.phone,
+        role: user.role || "普通员工",
+        isAdmin: user.is_admin,
+        permission: user.is_admin ? "admin" : "editor",
+        color: user.color || T.accent,
+      }];
+      save({ ...data, staff: newStaff });
+    }
+  }, [data, user]);
+
+  // Loading state
+  if (authLoading || dataLoading || !data) return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:T.bg,fontFamily:T.font}}>
     <GlobalStyles/>
     <div style={{textAlign:"center"}}>
       <div style={{color:T.accent,marginBottom:12}}><Loader2 size={36} style={{animation:"spin 1s linear infinite"}}/></div>
       <div style={{color:T.text3,fontSize:13}}>加载中...</div>
     </div>
   </div>;
-  if(!user)return<LoginScreen staff={data.staff} onLogin={setUser}/>;
-  const onLogout = () => setUser(null);
-  if(user.isAdmin)return<AdminApp data={data} user={user} save={save} syncStatus={syncStatus} auditLog={auditLog} taskInstancesHook={taskInstancesHook} onLogout={onLogout}/>;
-  return<EmployeeApp data={data} user={user} save={save} syncStatus={syncStatus} auditLog={auditLog} taskInstancesHook={taskInstancesHook} onLogout={onLogout}/>;
+
+  if (!user) return <LoginScreen onLogin={onLogin}/>;
+
+  const viewData = user.is_admin ? data : filteredData;
+
+  if (user.is_admin) return <AdminApp data={viewData} user={{...user, id: user.staff_id, isAdmin: true}} save={save} syncStatus={syncStatus} auditLog={auditLog} taskInstancesHook={taskInstancesHook} onLogout={onLogout}/>;
+  return <EmployeeApp data={viewData} user={{...user, id: user.staff_id, isAdmin: false}} save={save} syncStatus={syncStatus} auditLog={auditLog} taskInstancesHook={taskInstancesHook} onLogout={onLogout}/>;
 }
