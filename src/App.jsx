@@ -4,10 +4,10 @@ import {
   Mountain, LayoutDashboard, Settings, ClipboardList, CalendarDays, BarChart3, Users,
   ChevronRight, ChevronDown, Plus, Pencil, Trash2, X, Check, CheckCircle2, Circle,
   CircleDot, Smartphone, Store, MessageCircle, Radio, Pin, RefreshCw, Target, Clock,
-  FileText, AlertCircle, Zap, Bot, Send, Loader2, Copy, ChevronLeft, ListTodo,
-  UserCircle, Phone, Star, GripVertical, Search, CalendarClock, TrendingUp,
-  ShieldAlert, History, Bell, CalendarCheck, ChevronUp, Filter, Download, TriangleAlert, LogOut,
-  GitBranch, Milestone, GanttChartSquare, AlertOctagon, Link2, Paperclip, Eye, Unlink,
+  FileText, AlertCircle, Bot, Send, Loader2, Copy, ListTodo,
+  UserCircle, Phone, Star, Search, CalendarClock, TrendingUp,
+  ShieldAlert, History, CalendarCheck, Filter, Download, TriangleAlert, LogOut,
+  GitBranch, Milestone, GanttChartSquare, AlertOctagon, Link2, Paperclip, Eye,
   Lock, UserPlus, KeyRound, ShieldCheck, Upload, FolderArchive, FileCheck, FileX, FileClock,
   ArrowUpFromLine, FolderOpen, Image, FileVideo, FileAudio, File, EyeOff
 } from "lucide-react";
@@ -1590,7 +1590,7 @@ function GlobalSearchBar({data,onNavigate}){
 }
 
 function AdminApp({data,user,save,syncStatus,auditLog,taskInstancesHook,deliverablesHook,onLogout}) {
-  const[view,setView]=useState("overview");
+  const[view,setView]=useState("overview");const[showHidden,setShowHidden]=useState(false);
   const handleSearchNav=(type,id)=>{
     if(type==="action"||type==="project")setView("taskfilter");
     else if(type==="staff")setView("staff");
@@ -1602,7 +1602,8 @@ function AdminApp({data,user,save,syncStatus,auditLog,taskInstancesHook,delivera
       <div style={{padding:"24px 20px 20px"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <div style={{width:34,height:34,borderRadius:9,background:T.accent,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff"}}><Mountain size={18}/></div>
-          <div><div style={{fontSize:15,fontWeight:700,color:T.text1}}>第二座山</div><div style={{fontSize:10,color:T.text3}}>管理后台</div></div>
+          <div style={{flex:1}}><div style={{fontSize:15,fontWeight:700,color:T.text1}}>第二座山</div><div style={{fontSize:10,color:T.text3}}>管理后台</div></div>
+          <button onClick={()=>setShowHidden(h=>!h)} title="" style={{background:"none",border:"none",cursor:"pointer",padding:4,color:showHidden?T.accent:T.border,transition:T.transition,opacity:showHidden?0.9:0.3,display:"flex",alignItems:"center"}} onMouseEnter={e=>e.currentTarget.style.opacity=0.7} onMouseLeave={e=>e.currentTarget.style.opacity=showHidden?0.9:0.3}><Eye size={14}/></button>
         </div>
       </div>
       <GlobalSearchBar data={data} onNavigate={handleSearchNav}/>
@@ -1624,9 +1625,9 @@ function AdminApp({data,user,save,syncStatus,auditLog,taskInstancesHook,delivera
     </div>
     <main style={{flex:1,padding:"28px 36px",overflowY:"auto",maxHeight:"100vh"}}>
       {/* vData: data with hidden projects filtered out (for all views except ProjectsView) */}
-      {(()=>{const vData={...data,projects:(data.projects||[]).filter(p=>!p.hidden)};return<div style={{animation:"fadeIn 0.3s ease"}}>
+      {(()=>{const vData=showHidden?data:{...data,projects:(data.projects||[]).filter(p=>!p.hidden)};return<div style={{animation:"fadeIn 0.3s ease"}}>
         {view==="overview"&&<OverviewView data={vData} save={save} auditLog={auditLog} user={user}/>}
-        {view==="projects"&&<ProjectsView data={data} save={save} auditLog={auditLog} user={user}/>}
+        {view==="projects"&&<ProjectsView data={data} save={save} auditLog={auditLog} user={user} showHidden={showHidden}/>}
         {view==="kanban"&&<KanbanView data={vData} save={save} auditLog={auditLog} user={user}/>}
         {view==="taskfilter"&&<TaskFilterView data={vData} save={save} auditLog={auditLog} user={user}/>}
         {view==="timeline"&&<TimelineView data={vData} save={save} auditLog={auditLog} user={user}/>}
@@ -1694,11 +1695,9 @@ function OverviewView({data,save,auditLog,user}){
 }
 
 // ─── Projects ───────────────────────────
-function ProjectsView({data,save,auditLog,user}){
+function ProjectsView({data,save,auditLog,user,showHidden}){
   const{projects,staff}=data;const sorted=[...projects].sort((a,b)=>a.priority-b.priority);
-  const[expanded,setExpanded]=useState({});const[modal,setModal]=useState(null);const[showHidden,setShowHidden]=useState(false);
-  const tapRef=useRef({count:0,timer:null});
-  const handleTitleTap=()=>{tapRef.current.count++;clearTimeout(tapRef.current.timer);if(tapRef.current.count>=5){setShowHidden(h=>!h);tapRef.current.count=0;}else{tapRef.current.timer=setTimeout(()=>{tapRef.current.count=0;},1500);}};
+  const[expanded,setExpanded]=useState({});const[modal,setModal]=useState(null);
   const visibleSorted=showHidden?sorted:sorted.filter(p=>!p.hidden);
   const toggleHide=(pid,e)=>{e.stopPropagation();save({...data,projects:projects.map(p=>p.id===pid?{...p,hidden:!p.hidden}:p)});};
   const toggle=k=>setExpanded(p=>({...p,[k]:!p[k]}));
@@ -1719,7 +1718,7 @@ function ProjectsView({data,save,auditLog,user}){
 
   return<div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22}}>
-      <h2 onClick={handleTitleTap} style={{margin:0,fontSize:22,fontWeight:700,color:T.text1,display:"flex",alignItems:"center",gap:8,cursor:"default",userSelect:"none"}}><Settings size={22}/> 项目管理</h2>
+      <h2 style={{margin:0,fontSize:22,fontWeight:700,color:T.text1,display:"flex",alignItems:"center",gap:8}}><Settings size={22}/> 项目管理</h2>
       <Btn onClick={()=>setModal({type:"project",target:{id:uid(),name:"",priority:projects.length,isKey:false,color:T.accent}})}><Plus size={14}/> 新建项目</Btn>
     </div>
     {visibleSorted.map(p=>{const pOpen=expanded[p.id]!==false;const pa=getAllActions([p]);const pPct=pa.length?Math.round(pa.filter(a=>a.progress===2).length/pa.length*100):0;
@@ -1736,7 +1735,7 @@ function ProjectsView({data,save,auditLog,user}){
           </div>
           <span style={{fontSize:12,fontWeight:700,color:T.accent}}>{pPct}%</span>
           <div style={{display:"flex",gap:4}} onClick={e=>e.stopPropagation()}>
-            {showHidden&&<Btn small v="ghost" onClick={(e)=>toggleHide(p.id,e)} style={{color:p.hidden?T.danger:T.text3}}>{p.hidden?<EyeOff size={12}/>:<Eye size={12}/>}</Btn>}
+            <Btn small v="ghost" onClick={(e)=>toggleHide(p.id,e)} style={{color:p.hidden?T.text3:T.border,opacity:p.hidden?0.8:0.4}} title="">{p.hidden?<EyeOff size={12}/>:<Eye size={12}/>}</Btn>
             <Btn small v="ghost" onClick={()=>setModal({type:"project",target:{...p}})}><Pencil size={12}/></Btn>
             <Btn small v="danger" onClick={()=>delProject(p.id)}><Trash2 size={12}/></Btn>
           </div>
