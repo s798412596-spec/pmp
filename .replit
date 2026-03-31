@@ -1,8 +1,9 @@
 run = "npm run start"
 entrypoint = "src/App.jsx"
+modules = ["nodejs-20", "web", "nix"]
 
 [nix]
-channel = "stable-24_05"
+channel = "stable-25_05"
 
 [deployment]
 run = ["sh", "-c", "npm run build && npx vite preview --host 0.0.0.0 --port 3000"]
