@@ -8,7 +8,8 @@ import {
   UserCircle, Phone, Star, GripVertical, Search, CalendarClock, TrendingUp,
   ShieldAlert, History, Bell, CalendarCheck, ChevronUp, Filter, Download, TriangleAlert, LogOut,
   GitBranch, Milestone, GanttChartSquare, AlertOctagon, Link2, Paperclip, Eye, Unlink,
-  Lock, UserPlus, KeyRound, ShieldCheck
+  Lock, UserPlus, KeyRound, ShieldCheck, Upload, FolderArchive, FileCheck, FileX, FileClock,
+  ArrowUpFromLine, FolderOpen, Image, FileVideo, FileAudio, File
 } from "lucide-react";
 import { supabase, TABLE } from "./supabase.js";
 
@@ -238,9 +239,25 @@ function useStorage() {
 
   // Load from Supabase, fallback to localStorage
   useEffect(() => {
+    let done = false;
+    const fallbackToLocal = () => {
+      if (done) return;
+      done = true;
+      console.warn("Supabase load timeout/failed, using localStorage");
+      const local = localStorage.getItem(SK);
+      if (local) setData({ ...DEFAULT_DATA, ...JSON.parse(local) });
+      else setData(DEFAULT_DATA);
+      setSyncStatus("error");
+      setLoading(false);
+    };
+    // Timeout: if Supabase doesn't respond in 5s, fall back to localStorage
+    const loadTimeout = setTimeout(fallbackToLocal, 5000);
     (async () => {
       try {
         const { data: row, error } = await supabase.from(TABLE).select("data").eq("id", "main").single();
+        if (done) return; // timeout already fired
+        clearTimeout(loadTimeout);
+        done = true;
         if (row?.data && Object.keys(row.data).length > 0) {
           const merged = { ...DEFAULT_DATA, ...row.data };
           setData(merged);
@@ -263,11 +280,8 @@ function useStorage() {
           }
         }
       } catch (e) {
-        console.warn("Supabase load failed, using localStorage:", e);
-        const local = localStorage.getItem(SK);
-        if (local) setData({ ...DEFAULT_DATA, ...JSON.parse(local) });
-        else setData(DEFAULT_DATA);
-        setSyncStatus("error");
+        clearTimeout(loadTimeout);
+        fallbackToLocal();
       }
       setLoading(false);
     })();
@@ -397,6 +411,98 @@ function useTaskInstances() {
 
   return { instances, fetchInstances, checkIn, uncheckIn, getInstanceStatus };
 }
+
+// ─── Deliverables Hook ──────────────────
+function useDeliverables() {
+  const [deliverables, setDeliverables] = useState([]);
+  const [dlLoading, setDlLoading] = useState(false);
+
+  const fetchDeliverables = useCallback(async () => {
+    const { data, error } = await supabase.from("deliverables").select("*").order("created_at", { ascending: false });
+    if (!error && data) setDeliverables(data);
+  }, []);
+
+  useEffect(() => { fetchDeliverables(); }, [fetchDeliverables]);
+
+  const uploadFile = useCallback(async (file, actionId, projectId, categoryId, resourceId, user) => {
+    setDlLoading(true);
+    try {
+      // Determine version
+      const existing = deliverables.filter(d => d.action_id === actionId);
+      const version = existing.length > 0 ? Math.max(...existing.map(d => d.version)) + 1 : 1;
+      const ext = file.name.split(".").pop();
+      const safeName = file.name.replace(/[^a-zA-Z0-9._\u4e00-\u9fff-]/g, "_");
+      const path = `${projectId}/${categoryId}/${resourceId}/${actionId}/v${version}_${safeName}`;
+
+      const { error: uploadErr } = await supabase.storage.from("deliverables").upload(path, file, { upsert: false });
+      if (uploadErr) throw uploadErr;
+
+      const { error: insertErr } = await supabase.from("deliverables").insert({
+        action_id: actionId,
+        project_id: projectId,
+        category_id: categoryId,
+        resource_id: resourceId,
+        file_name: file.name,
+        file_path: path,
+        file_size: file.size,
+        file_type: file.type || ext,
+        version,
+        status: "pending",
+        uploaded_by: user.staff_id || user.id,
+        uploaded_by_name: user.name,
+      });
+      if (insertErr) throw insertErr;
+      await fetchDeliverables();
+      return { success: true, version };
+    } catch (e) {
+      console.error("Upload error:", e);
+      return { success: false, error: e.message };
+    } finally { setDlLoading(false); }
+  }, [deliverables, fetchDeliverables]);
+
+  const reviewDeliverable = useCallback(async (id, status, reviewer, rejectReason) => {
+    const updates = {
+      status,
+      reviewed_by: reviewer.staff_id || reviewer.id,
+      reviewed_by_name: reviewer.name,
+      reviewed_at: new Date().toISOString(),
+      reject_reason: status === "rejected" ? (rejectReason || "") : "",
+    };
+    await supabase.from("deliverables").update(updates).eq("id", id);
+    await fetchDeliverables();
+  }, [fetchDeliverables]);
+
+  const getFileUrl = useCallback(async (path) => {
+    const { data } = await supabase.storage.from("deliverables").createSignedUrl(path, 3600);
+    return data?.signedUrl || "";
+  }, []);
+
+  const getActionDeliverables = useCallback((actionId) => {
+    return deliverables.filter(d => d.action_id === actionId);
+  }, [deliverables]);
+
+  const getProjectDeliverables = useCallback((projectId) => {
+    return deliverables.filter(d => d.project_id === projectId);
+  }, [deliverables]);
+
+  return { deliverables, dlLoading, uploadFile, reviewDeliverable, getFileUrl, getActionDeliverables, getProjectDeliverables, fetchDeliverables };
+}
+
+// File type icon helper
+const getFileIcon = (type) => {
+  if (!type) return File;
+  const t = type.toLowerCase();
+  if (t.startsWith("image") || /jpg|jpeg|png|gif|svg|webp/.test(t)) return Image;
+  if (t.startsWith("video") || /mp4|mov|avi|mkv/.test(t)) return FileVideo;
+  if (t.startsWith("audio") || /mp3|wav|aac/.test(t)) return FileAudio;
+  return File;
+};
+const formatFileSize = (bytes) => {
+  if (!bytes) return "0B";
+  if (bytes < 1024) return bytes + "B";
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + "KB";
+  return (bytes / 1048576).toFixed(1) + "MB";
+};
 
 // ─── Initials Avatar ─────────────────────
 const Avatar = ({name, color, size=32}) => {
@@ -1279,7 +1385,7 @@ function RecurringTasksView({ data, save, user, taskInstancesHook, auditLog }) {
 // ═══════════════════════════════════════════
 // ─── EMPLOYEE VIEW ────────────────────────
 // ═══════════════════════════════════════════
-function EmployeeApp({data,user,save,syncStatus,auditLog,taskInstancesHook,onLogout}) {
+function EmployeeApp({data,user,save,syncStatus,auditLog,taskInstancesHook,deliverablesHook,onLogout}) {
   const [view,setView]=useState("mytasks");
   const {projects,staff}=data;
   const allActions=getAllActions(projects);
@@ -1428,6 +1534,7 @@ const ADMIN_NAV=[
   {id:"risks",icon:AlertOctagon,label:"风险管理"},
   {id:"schedule",icon:CalendarDays,label:"工时排期"},
   {id:"reports",icon:BarChart3,label:"数据报表"},
+  {id:"deliverables",icon:FolderArchive,label:"交付管理"},
   {id:"staff",icon:Users,label:"人员管理"},
   {id:"audit",icon:History,label:"操作审计"},
 ];
@@ -1481,7 +1588,7 @@ function GlobalSearchBar({data,onNavigate}){
   </div>;
 }
 
-function AdminApp({data,user,save,syncStatus,auditLog,taskInstancesHook,onLogout}) {
+function AdminApp({data,user,save,syncStatus,auditLog,taskInstancesHook,deliverablesHook,onLogout}) {
   const[view,setView]=useState("overview");
   const handleSearchNav=(type,id)=>{
     if(type==="action"||type==="project")setView("taskfilter");
@@ -1525,6 +1632,7 @@ function AdminApp({data,user,save,syncStatus,auditLog,taskInstancesHook,onLogout
         {view==="risks"&&<RiskView data={data} save={save} auditLog={auditLog} user={user}/>}
         {view==="schedule"&&<ScheduleView data={data} save={save}/>}
         {view==="reports"&&<ReportsView data={data}/>}
+        {view==="deliverables"&&<DeliverablesView data={data} user={user} deliverablesHook={deliverablesHook} auditLog={auditLog}/>}
         {view==="staff"&&<StaffView data={data} save={save} auditLog={auditLog} user={user}/>}
         {view==="audit"&&<AuditLogView auditLog={auditLog} staff={data.staff}/>}
       </div>
@@ -2372,9 +2480,223 @@ function StaffView({data,save,auditLog,user}){const{staff,projects}=data;const[e
 }
 
 // ═══════════════════════════════════════════
+// ─── Deliverables View (Admin) ────────────
+const DL_STATUS = [{v:"pending",l:"待审核",c:T.warning,icon:FileClock},{v:"approved",l:"已通过",c:T.success,icon:FileCheck},{v:"rejected",l:"已驳回",c:T.danger,icon:FileX}];
+
+function DeliverablesView({data,user,deliverablesHook,auditLog}) {
+  const {deliverables,reviewDeliverable,getFileUrl} = deliverablesHook;
+  const {projects,staff} = data;
+  const [filterProject,setFilterProject] = useState("");
+  const [filterStatus,setFilterStatus] = useState("");
+  const [filterMonth,setFilterMonth] = useState("");
+  const [viewMode,setViewMode] = useState("list");
+  const [reviewModal,setReviewModal] = useState(null);
+  const [rejectReason,setRejectReason] = useState("");
+  const [previewUrl,setPreviewUrl] = useState("");
+  const [uploadModal,setUploadModal] = useState(null);
+  const [uploadFiles,setUploadFiles] = useState([]);
+  const [uploadStatus,setUploadStatus] = useState("");
+  const fileInputRef = useRef(null);
+
+  const getActionName = (actionId) => { for(const p of projects) for(const c of p.categories||[]) for(const r of c.resources||[]) for(const a of r.actions||[]) if(a.id===actionId) return a.name; return actionId; };
+  const getProjName = (pid) => projects.find(p=>p.id===pid)?.name || pid;
+
+  const filtered = useMemo(()=>{
+    let d = [...deliverables];
+    if(filterProject) d = d.filter(x=>x.project_id===filterProject);
+    if(filterStatus) d = d.filter(x=>x.status===filterStatus);
+    if(filterMonth) d = d.filter(x=>x.created_at?.slice(0,7)===filterMonth);
+    return d;
+  },[deliverables,filterProject,filterStatus,filterMonth]);
+
+  const archiveByProject = useMemo(()=>{
+    const map = {};
+    filtered.forEach(d=>{ const pid=d.project_id; if(!map[pid])map[pid]={name:getProjName(pid),items:[]}; map[pid].items.push(d); });
+    return Object.entries(map);
+  },[filtered,projects]);
+
+  const months = useMemo(()=>{
+    const set = new Set(deliverables.map(d=>d.created_at?.slice(0,7)).filter(Boolean));
+    return [...set].sort().reverse();
+  },[deliverables]);
+
+  const doReview = async (status) => {
+    if(!reviewModal) return;
+    await reviewDeliverable(reviewModal.id, status, user, rejectReason);
+    if(auditLog) auditLog.addLog(user.id,user.name,status==="approved"?"approve":"reject","交付物",reviewModal.file_name,{reason:rejectReason});
+    setReviewModal(null); setRejectReason("");
+  };
+
+  const openPreview = async (path) => { const url = await getFileUrl(path); if(url) setPreviewUrl(url); };
+
+  const doUpload = async () => {
+    if(!uploadModal || !uploadFiles.length) return;
+    setUploadStatus("uploading");
+    for(const f of uploadFiles) {
+      const r = await deliverablesHook.uploadFile(f, uploadModal.actionId, uploadModal.projectId, uploadModal.categoryId, uploadModal.resourceId, user);
+      if(!r.success) { setUploadStatus("error: "+r.error); return; }
+    }
+    setUploadStatus("success");
+    setUploadFiles([]);
+    if(auditLog) auditLog.addLog(user.id,user.name,"upload","交付物",uploadModal.actionName,{count:uploadFiles.length});
+    setTimeout(()=>{setUploadModal(null);setUploadStatus("");},1200);
+  };
+
+  const allActionsFlat = useMemo(()=>{
+    const arr = [];
+    projects.forEach(p=>(p.categories||[]).forEach(c=>(c.resources||[]).forEach(r=>(r.actions||[]).forEach(a=>arr.push({...a,projectId:p.id,projectName:p.name,categoryId:c.id,resourceId:r.id,resourceName:r.name})))));
+    return arr;
+  },[projects]);
+
+  const pendingCount = deliverables.filter(d=>d.status==="pending").length;
+
+  return<div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22}}>
+      <h2 style={{margin:0,fontSize:22,fontWeight:700,color:T.text1,display:"flex",alignItems:"center",gap:8}}>
+        <FolderArchive size={22}/> 交付管理
+        {pendingCount>0&&<Badge color={T.warning}>{pendingCount} 待审核</Badge>}
+      </h2>
+      <div style={{display:"flex",gap:8}}>
+        <Btn small v={viewMode==="list"?"primary":"secondary"} onClick={()=>setViewMode("list")}>列表视图</Btn>
+        <Btn small v={viewMode==="archive"?"primary":"secondary"} onClick={()=>setViewMode("archive")}><FolderOpen size={12}/> 归档视图</Btn>
+        <Btn onClick={()=>setUploadModal({actionId:"",projectId:"",categoryId:"",resourceId:"",actionName:""})}><Upload size={14}/> 上传交付物</Btn>
+      </div>
+    </div>
+
+    <div style={{display:"flex",gap:12,marginBottom:20,flexWrap:"wrap"}}>
+      <QuickSelect label="项目" options={[{v:"",l:"全部项目"},...projects.map(p=>({v:p.id,l:p.name}))]} value={filterProject} onChange={setFilterProject}/>
+      <QuickSelect label="状态" options={[{v:"",l:"全部状态"},...DL_STATUS.map(s=>({v:s.v,l:s.l}))]} value={filterStatus} onChange={setFilterStatus}/>
+      <QuickSelect label="月份" options={[{v:"",l:"全部月份"},...months.map(m=>({v:m,l:m}))]} value={filterMonth} onChange={setFilterMonth}/>
+      <div style={{flex:1}}/><span style={{fontSize:12,color:T.text3,alignSelf:"flex-end"}}>{filtered.length} 条记录</span>
+    </div>
+
+    {viewMode==="list"&&<div style={{display:"flex",flexDirection:"column",gap:8}}>
+      {filtered.length===0&&<Card style={{textAlign:"center",padding:40,color:T.text3}}><FolderArchive size={32} strokeWidth={1.5} style={{marginBottom:8}}/><div>暂无交付物</div></Card>}
+      {filtered.map(d=>{const st=DL_STATUS.find(s=>s.v===d.status);const StIcon=st?.icon||FileClock;const FIcon=getFileIcon(d.file_type);
+        return<Card key={d.id} style={{padding:"14px 20px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <div style={{width:36,height:36,borderRadius:10,background:(st?.c||T.text3)+"14",display:"flex",alignItems:"center",justifyContent:"center"}}><FIcon size={18} color={st?.c}/></div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:14,fontWeight:600,color:T.text1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.file_name}</span>
+                <Badge color={T.text3} small>v{d.version}</Badge>
+                <Badge color={st?.c} small><StIcon size={9} style={{marginRight:2}}/>{st?.l}</Badge>
+              </div>
+              <div style={{fontSize:11,color:T.text3,display:"flex",gap:8,marginTop:2,flexWrap:"wrap"}}>
+                <span>{getProjName(d.project_id)}</span><span>·</span><span>{getActionName(d.action_id)}</span><span>·</span>
+                <span>{d.uploaded_by_name}</span><span>·</span><span>{formatFileSize(d.file_size)}</span><span>·</span><span>{d.created_at?.slice(0,16).replace("T"," ")}</span>
+              </div>
+              {d.status==="rejected"&&d.reject_reason&&<div style={{fontSize:11,color:T.danger,marginTop:4,display:"flex",alignItems:"center",gap:4}}><AlertCircle size={11}/> 驳回原因：{d.reject_reason}</div>}
+            </div>
+            <div style={{display:"flex",gap:6}}>
+              <Btn small v="ghost" onClick={()=>openPreview(d.file_path)}><Eye size={13}/></Btn>
+              {d.status==="pending"&&<Btn small v="success" onClick={()=>setReviewModal(d)}><FileCheck size={13}/> 审核</Btn>}
+            </div>
+          </div>
+        </Card>;})}
+    </div>}
+
+    {viewMode==="archive"&&<div style={{display:"flex",flexDirection:"column",gap:16}}>
+      {archiveByProject.length===0&&<Card style={{textAlign:"center",padding:40,color:T.text3}}><FolderOpen size={32} strokeWidth={1.5}/><div style={{marginTop:8}}>暂无归档</div></Card>}
+      {archiveByProject.map(([pid,group])=><Card key={pid} style={{padding:0,overflow:"hidden"}}>
+        <div style={{padding:"14px 20px",background:T.borderLight,borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",gap:8}}>
+          <ProjectDot color={projects.find(p=>p.id===pid)?.color||T.accent} size={12}/>
+          <span style={{fontSize:14,fontWeight:700,color:T.text1}}>{group.name}</span>
+          <Badge color={T.text3} small>{group.items.length} 文件</Badge>
+          <span style={{flex:1}}/><span style={{fontSize:11,color:T.text3}}>{group.items.filter(d=>d.status==="approved").length} 已归档</span>
+        </div>
+        <div>{group.items.map(d=>{const st=DL_STATUS.find(s=>s.v===d.status);const FIcon=getFileIcon(d.file_type);
+          return<div key={d.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 20px",borderBottom:`1px solid ${T.borderLight}`,fontSize:12}}>
+            <FIcon size={14} color={st?.c||T.text3}/>
+            <span style={{fontWeight:600,color:T.text1,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.file_name}</span>
+            <Badge color={T.text3} small>v{d.version}</Badge>
+            <span style={{color:T.text3}}>{getActionName(d.action_id)}</span>
+            <span style={{color:T.text3}}>{d.uploaded_by_name}</span>
+            <span style={{color:T.text3}}>{d.created_at?.slice(5,10)}</span>
+            <Badge color={st?.c} small>{st?.l}</Badge>
+            <Btn small v="ghost" onClick={()=>openPreview(d.file_path)}><Eye size={11}/></Btn>
+            {d.status==="pending"&&<Btn small v="ghost" onClick={()=>setReviewModal(d)}><FileCheck size={11}/></Btn>}
+          </div>;})}</div>
+      </Card>)}
+    </div>}
+
+    <Modal open={!!reviewModal} onClose={()=>{setReviewModal(null);setRejectReason("");}} title="审核交付物" width={480}>
+      {reviewModal&&<div>
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"14px 16px",background:T.borderLight,borderRadius:T.radiusSm,marginBottom:16}}>
+          {(()=>{const FIcon=getFileIcon(reviewModal.file_type);return<FIcon size={24} color={T.accent}/>;})()}
+          <div>
+            <div style={{fontSize:14,fontWeight:600,color:T.text1}}>{reviewModal.file_name}</div>
+            <div style={{fontSize:11,color:T.text3}}>{getProjName(reviewModal.project_id)} · {getActionName(reviewModal.action_id)} · v{reviewModal.version} · {formatFileSize(reviewModal.file_size)}</div>
+          </div>
+        </div>
+        <Btn small v="ghost" onClick={()=>openPreview(reviewModal.file_path)} style={{marginBottom:12}}><Eye size={13}/> 预览/下载文件</Btn>
+        {(()=>{const history=deliverables.filter(d=>d.action_id===reviewModal.action_id&&d.id!==reviewModal.id);
+          return history.length>0&&<div style={{marginBottom:16}}>
+            <div style={{fontSize:11,fontWeight:600,color:T.text3,marginBottom:6}}>历史版本</div>
+            {history.map(h=>{const hst=DL_STATUS.find(s=>s.v===h.status);return<div key={h.id} style={{fontSize:11,color:T.text2,padding:"3px 0",display:"flex",alignItems:"center",gap:6}}>
+              <Badge color={T.text3} small>v{h.version}</Badge><span>{h.file_name}</span><Badge color={hst?.c} small>{hst?.l}</Badge>
+              {h.reject_reason&&<span style={{color:T.danger}}>— {h.reject_reason}</span>}
+            </div>;})}
+          </div>;
+        })()}
+        <Input label="驳回原因（仅驳回时需要）" placeholder="请输入驳回原因..." value={rejectReason} onChange={e=>setRejectReason(e.target.value)}/>
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
+          <Btn v="secondary" onClick={()=>{setReviewModal(null);setRejectReason("");}}>取消</Btn>
+          <Btn v="danger" onClick={()=>doReview("rejected")} disabled={!rejectReason.trim()}><FileX size={14}/> 驳回</Btn>
+          <Btn v="success" onClick={()=>doReview("approved")}><FileCheck size={14}/> 通过并归档</Btn>
+        </div>
+      </div>}
+    </Modal>
+
+    <Modal open={!!uploadModal} onClose={()=>{setUploadModal(null);setUploadFiles([]);setUploadStatus("");}} title="上传交付物" width={520}>
+      {uploadModal&&<div>
+        <QuickSelect label="选择任务" options={allActionsFlat.map(a=>({v:a.id,l:`${a.projectName} / ${a.resourceName} / ${a.name}`}))} value={uploadModal.actionId} onChange={v=>{const a=allActionsFlat.find(x=>x.id===v);if(a)setUploadModal({actionId:v,projectId:a.projectId,categoryId:a.categoryId,resourceId:a.resourceId,actionName:a.name});}}/>
+        <div style={{marginBottom:16}}>
+          <div style={{fontSize:12,fontWeight:600,color:T.text2,marginBottom:6}}>选择文件（支持多选，单文件最大50MB）</div>
+          <div onClick={()=>fileInputRef.current?.click()} style={{padding:24,border:`2px dashed ${T.border}`,borderRadius:T.radius,textAlign:"center",cursor:"pointer",background:T.borderLight}}
+            onDragOver={e=>{e.preventDefault();e.currentTarget.style.borderColor=T.accent;}}
+            onDragLeave={e=>{e.currentTarget.style.borderColor=T.border;}}
+            onDrop={e=>{e.preventDefault();e.currentTarget.style.borderColor=T.border;setUploadFiles([...uploadFiles,...e.dataTransfer.files]);}}>
+            <ArrowUpFromLine size={24} color={T.text3} style={{marginBottom:6}}/>
+            <div style={{fontSize:13,color:T.text2}}>点击选择或拖拽文件到此处</div>
+            <div style={{fontSize:11,color:T.text3}}>图片、视频、文档、PDF 等所有格式</div>
+          </div>
+          <input ref={fileInputRef} type="file" multiple style={{display:"none"}} onChange={e=>{setUploadFiles([...uploadFiles,...e.target.files]);e.target.value="";}}/>
+        </div>
+        {uploadFiles.length>0&&<div style={{marginBottom:12}}>
+          {[...uploadFiles].map((f,i)=>{const FIcon=getFileIcon(f.type);return<div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:T.borderLight,borderRadius:T.radiusSm,marginBottom:4,fontSize:12}}>
+            <FIcon size={14} color={T.accent}/><span style={{flex:1,color:T.text1,fontWeight:500}}>{f.name}</span><span style={{color:T.text3}}>{formatFileSize(f.size)}</span>
+            <button onClick={()=>setUploadFiles([...uploadFiles].filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:T.danger,cursor:"pointer",padding:2}}><X size={12}/></button>
+          </div>;})}
+        </div>}
+        {uploadStatus==="success"&&<div style={{padding:"10px 14px",background:"#F0FDF4",borderRadius:T.radiusSm,marginBottom:12,fontSize:12,color:T.success,display:"flex",alignItems:"center",gap:6}}><CheckCircle2 size={14}/> 上传成功！</div>}
+        {uploadStatus.startsWith("error")&&<div style={{padding:"10px 14px",background:"#FFF2F2",borderRadius:T.radiusSm,marginBottom:12,fontSize:12,color:T.danger,display:"flex",alignItems:"center",gap:6}}><AlertCircle size={14}/> {uploadStatus}</div>}
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+          <Btn v="secondary" onClick={()=>{setUploadModal(null);setUploadFiles([]);setUploadStatus("");}}>取消</Btn>
+          <Btn onClick={doUpload} disabled={!uploadModal.actionId||!uploadFiles.length||uploadStatus==="uploading"}>
+            {uploadStatus==="uploading"?<><Loader2 size={14} style={{animation:"spin 1s linear infinite"}}/> 上传中...</>:<><Upload size={14}/> 上传 ({uploadFiles.length}个文件)</>}
+          </Btn>
+        </div>
+      </div>}
+    </Modal>
+
+    <Modal open={!!previewUrl} onClose={()=>setPreviewUrl("")} title="文件预览" width={700}>
+      {previewUrl&&<div style={{textAlign:"center"}}>
+        {/\.(jpg|jpeg|png|gif|webp|svg)/i.test(previewUrl)?<img src={previewUrl} style={{maxWidth:"100%",maxHeight:500,borderRadius:T.radius}} alt="preview"/>:
+         /\.(mp4|mov|webm)/i.test(previewUrl)?<video src={previewUrl} controls style={{maxWidth:"100%",maxHeight:500,borderRadius:T.radius}}/>:
+         /\.pdf/i.test(previewUrl)?<iframe src={previewUrl} style={{width:"100%",height:500,border:"none",borderRadius:T.radius}}/>:
+         <div style={{padding:40,color:T.text3}}><File size={48} strokeWidth={1.5}/><p>此文件类型不支持预览</p></div>}
+        <div style={{marginTop:12}}><a href={previewUrl} target="_blank" rel="noopener" style={{color:T.accent,fontSize:13,fontWeight:600,textDecoration:"none"}}>
+          <Download size={14} style={{marginRight:4,verticalAlign:"middle"}}/> 下载文件
+        </a></div>
+      </div>}
+    </Modal>
+  </div>;
+}
+
 // ─── LOGIN + REGISTER + ROUTER ────────────
 // ═══════════════════════════════════════════
-function LoginScreen({onLogin}) {
+function LoginScreen({onLogin, appData}) {
   const [mode, setMode] = useState("login"); // "login" | "register"
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
@@ -2388,19 +2710,55 @@ function LoginScreen({onLogin}) {
   const doLogin = async () => {
     if (!phone.trim() || !password) { setErr("请输入手机号和密码"); return; }
     setLoading(true); clearErr();
+    let cancelled = false;
+    const timeout = setTimeout(() => { cancelled = true; setErr("网络超时，请检查网络连接后重试"); setLoading(false); }, 15000);
     try {
       const fakeEmail = `${phone.trim()}@pmp.local`;
       const { data, error } = await supabase.auth.signInWithPassword({ email: fakeEmail, password });
+      if (cancelled) return;
       if (error) {
+        clearTimeout(timeout);
         if (error.message.includes("Invalid login")) setErr("手机号或密码错误");
+        else if (error.message.includes("fetch")) setErr("网络连接失败，请检查网络");
         else setErr(error.message);
-      } else if (data.user) {
-        // Fetch profile
-        const { data: profile } = await supabase.from("profiles").select("*").eq("id", data.user.id).single();
-        if (profile) onLogin(profile);
-        else setErr("用户资料未找到，请联系管理员");
+        setLoading(false);
+        return;
       }
-    } catch (e) { setErr("登录失败: " + e.message); }
+      if (data.user) {
+        // Fetch profile — also protected by the same timeout
+        const { data: profile, error: profErr } = await supabase.from("profiles").select("*").eq("id", data.user.id).single();
+        if (cancelled) return;
+        clearTimeout(timeout);
+        if (profile && !profErr) {
+          onLogin(profile);
+        } else {
+          // Profile missing (orphaned auth user) — auto-create profile
+          console.warn("Profile missing, auto-creating:", profErr);
+          const existingStaff = (appData?.staff || []).find(s => s.phone === phone.trim());
+          const staffId = existingStaff?.id || uid();
+          const { data: newProfile, error: createErr } = await supabase.from("profiles").insert({
+            id: data.user.id,
+            phone: phone.trim(),
+            name: data.user.user_metadata?.name || phone.trim(),
+            role: existingStaff?.role || "普通员工",
+            is_admin: existingStaff?.isAdmin || false,
+            staff_id: staffId,
+            color: existingStaff?.color || PIE_COLORS[Math.floor(Math.random() * PIE_COLORS.length)]
+          }).select().single();
+          if (newProfile && !createErr) {
+            onLogin(newProfile);
+          } else {
+            console.error("Auto-create profile failed:", createErr);
+            setErr("用户资料创建失败，请联系管理员");
+          }
+        }
+      }
+    } catch (e) {
+      if (cancelled) return;
+      clearTimeout(timeout);
+      if (e.message?.includes("fetch")) setErr("网络连接失败，请检查网络");
+      else setErr("登录失败: " + e.message);
+    }
     setLoading(false);
   };
 
@@ -2409,35 +2767,97 @@ function LoginScreen({onLogin}) {
     if (password.length < 6) { setErr("密码至少6位"); return; }
     if (!/^1\d{10}$/.test(phone.trim())) { setErr("请输入正确的11位手机号"); return; }
     setLoading(true); clearErr();
+    let cancelled = false;
+    const timeout = setTimeout(() => { cancelled = true; setErr("网络超时，请检查网络连接后重试"); setLoading(false); }, 15000);
     try {
       const fakeEmail = `${phone.trim()}@pmp.local`;
-      // Check if phone already registered
+      // Check if phone already registered in profiles
       const { data: existing } = await supabase.from("profiles").select("id").eq("phone", phone.trim()).maybeSingle();
-      if (existing) { setErr("该手机号已注册"); setLoading(false); return; }
+      if (cancelled) return;
+      if (existing) { clearTimeout(timeout); setErr("该手机号已注册"); setLoading(false); return; }
 
       const { data: authData, error: authErr } = await supabase.auth.signUp({
         email: fakeEmail,
         password,
         options: { data: { name: name.trim(), phone: phone.trim() } }
       });
-      if (authErr) { setErr(authErr.message); setLoading(false); return; }
+      if (cancelled) return;
+      if (authErr) {
+        if (authErr.message.includes("already registered")) {
+          // Orphaned auth user (no profile) — try logging in and auto-create profile
+          const { data: loginData, error: loginErr } = await supabase.auth.signInWithPassword({ email: fakeEmail, password });
+          if (cancelled) return;
+          if (loginErr) {
+            clearTimeout(timeout);
+            setErr("该手机号已注册但密码不匹配，请尝试登录或联系管理员");
+            setLoading(false); return;
+          }
+          // Login succeeded, create missing profile
+          const existingStaff = (appData?.staff || []).find(s => s.phone === phone.trim());
+          const staffId = existingStaff?.id || uid();
+          const { data: newProfile, error: profCreateErr } = await supabase.from("profiles").insert({
+            id: loginData.user.id,
+            phone: phone.trim(),
+            name: name.trim(),
+            role: existingStaff?.role || "普通员工",
+            is_admin: existingStaff?.isAdmin || false,
+            staff_id: staffId,
+            color: existingStaff?.color || PIE_COLORS[Math.floor(Math.random() * PIE_COLORS.length)]
+          }).select().single();
+          if (cancelled) return;
+          clearTimeout(timeout);
+          if (newProfile && !profCreateErr) {
+            onLogin(newProfile);
+          } else {
+            setErr("用户资料创建失败，请联系管理员");
+          }
+          setLoading(false); return;
+        }
+        clearTimeout(timeout);
+        setErr(authErr.message);
+        setLoading(false); return;
+      }
       if (authData.user) {
+        // Match existing staff by phone number to preserve task assignments
+        const existingStaff = (appData?.staff || []).find(s => s.phone === phone.trim());
+        const staffId = existingStaff?.id || uid();
+        const staffColor = existingStaff?.color || PIE_COLORS[Math.floor(Math.random() * PIE_COLORS.length)];
+        const staffRole = existingStaff?.role || "普通员工";
         // Create profile
         const { error: profErr } = await supabase.from("profiles").insert({
           id: authData.user.id,
           phone: phone.trim(),
           name: name.trim(),
-          role: "普通员工",
-          is_admin: false,
-          staff_id: uid(),
-          color: PIE_COLORS[Math.floor(Math.random() * PIE_COLORS.length)]
+          role: staffRole,
+          is_admin: existingStaff?.isAdmin || false,
+          staff_id: staffId,
+          color: staffColor
         });
-        if (profErr) console.error("Profile create error:", profErr);
-        setSuccess("注册成功！请登录");
-        setMode("login");
-        setPassword("");
+        if (cancelled) return;
+        if (profErr) {
+          clearTimeout(timeout);
+          setErr("注册失败：无法创建用户资料，请联系管理员");
+          await supabase.auth.signOut();
+          setLoading(false); return;
+        }
+        clearTimeout(timeout);
+        // Auto-login: fetch profile and log in directly
+        const { data: profile } = await supabase.from("profiles").select("*").eq("id", authData.user.id).single();
+        if (cancelled) return;
+        if (profile) {
+          onLogin(profile);
+        } else {
+          setSuccess("注册成功！请登录");
+          setMode("login");
+          setPassword("");
+        }
       }
-    } catch (e) { setErr("注册失败: " + e.message); }
+    } catch (e) {
+      if (cancelled) return;
+      clearTimeout(timeout);
+      if (e.message?.includes("fetch")) setErr("网络连接失败，请检查网络");
+      else setErr("注册失败: " + e.message);
+    }
     setLoading(false);
   };
 
@@ -2489,29 +2909,31 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const auditLog = useAuditLog();
   const taskInstancesHook = useTaskInstances();
+  const deliverablesHook = useDeliverables();
 
   // Listen for Supabase Auth state changes
   useEffect(() => {
-    // Check existing session
+    // Check existing session with timeout to prevent infinite loading
+    const authTimeout = setTimeout(() => { setAuthLoading(false); }, 5000);
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       try {
         if (session?.user) {
           const { data: profile, error } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
           if (profile && !error) setUser(profile);
-          else console.warn("Profile not found or error, showing login", error);
+          else {
+            // Profile missing (orphaned session) — sign out to avoid stuck state
+            console.warn("Profile not found, signing out orphaned session", error);
+            await supabase.auth.signOut();
+          }
         }
       } catch (e) { console.error("Session check error:", e); }
+      clearTimeout(authTimeout);
       setAuthLoading(false);
-    }).catch(() => setAuthLoading(false));
+    }).catch(() => { clearTimeout(authTimeout); setAuthLoading(false); });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event) => {
+      // Only handle sign-out here; sign-in is handled by doLogin/doRegister directly
       if (event === "SIGNED_OUT") setUser(null);
-      if (event === "SIGNED_IN" && session?.user) {
-        try {
-          const { data: profile, error } = await supabase.from("profiles").select("*").eq("id", session.user.id).single();
-          if (profile && !error) setUser(profile);
-        } catch (e) { console.error("Auth state change error:", e); }
-      }
     });
     return () => subscription.unsubscribe();
   }, []);
@@ -2573,10 +2995,10 @@ export default function App() {
     </div>
   </div>;
 
-  if (!user) return <LoginScreen onLogin={onLogin}/>;
+  if (!user) return <LoginScreen onLogin={onLogin} appData={data}/>;
 
   const viewData = user.is_admin ? data : filteredData;
 
-  if (user.is_admin) return <AdminApp data={viewData} user={{...user, id: user.staff_id, isAdmin: true}} save={save} syncStatus={syncStatus} auditLog={auditLog} taskInstancesHook={taskInstancesHook} onLogout={onLogout}/>;
-  return <EmployeeApp data={viewData} user={{...user, id: user.staff_id, isAdmin: false}} save={save} syncStatus={syncStatus} auditLog={auditLog} taskInstancesHook={taskInstancesHook} onLogout={onLogout}/>;
+  if (user.is_admin) return <AdminApp data={viewData} user={{...user, id: user.staff_id, isAdmin: true}} save={save} syncStatus={syncStatus} auditLog={auditLog} taskInstancesHook={taskInstancesHook} deliverablesHook={deliverablesHook} onLogout={onLogout}/>;
+  return <EmployeeApp data={viewData} user={{...user, id: user.staff_id, isAdmin: false}} save={save} syncStatus={syncStatus} auditLog={auditLog} taskInstancesHook={taskInstancesHook} deliverablesHook={deliverablesHook} onLogout={onLogout}/>;
 }
