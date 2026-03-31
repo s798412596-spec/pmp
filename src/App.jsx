@@ -9,7 +9,7 @@ import {
   ShieldAlert, History, Bell, CalendarCheck, ChevronUp, Filter, Download, TriangleAlert, LogOut,
   GitBranch, Milestone, GanttChartSquare, AlertOctagon, Link2, Paperclip, Eye, Unlink,
   Lock, UserPlus, KeyRound, ShieldCheck, Upload, FolderArchive, FileCheck, FileX, FileClock,
-  ArrowUpFromLine, FolderOpen, Image, FileVideo, FileAudio, File
+  ArrowUpFromLine, FolderOpen, Image, FileVideo, FileAudio, File, EyeOff
 } from "lucide-react";
 import { supabase, TABLE } from "./supabase.js";
 
@@ -250,7 +250,7 @@ function useStorage() {
       setSyncStatus("error");
       setLoading(false);
     };
-    // Timeout: if Supabase doesn't respond in 10s, fall back to localStorage
+    // Timeout: if Supabase doesn't respond in 5s, fall back to localStorage
     const loadTimeout = setTimeout(fallbackToLocal, 10000);
     (async () => {
       try {
@@ -1529,6 +1529,7 @@ const ADMIN_NAV=[
   {id:"projects",icon:Settings,label:"项目管理"},
   {id:"kanban",icon:ClipboardList,label:"任务看板"},
   {id:"taskfilter",icon:Filter,label:"任务筛选"},
+  {id:"timeline",icon:CalendarClock,label:"时间线"},
   {id:"gantt",icon:GanttChartSquare,label:"甘特图"},
   {id:"recurring",icon:CalendarCheck,label:"周期任务"},
   {id:"risks",icon:AlertOctagon,label:"风险管理"},
@@ -1622,20 +1623,22 @@ function AdminApp({data,user,save,syncStatus,auditLog,taskInstancesHook,delivera
       </div>
     </div>
     <main style={{flex:1,padding:"28px 36px",overflowY:"auto",maxHeight:"100vh"}}>
-      <div style={{animation:"fadeIn 0.3s ease"}}>
-        {view==="overview"&&<OverviewView data={data} save={save} auditLog={auditLog} user={user}/>}
+      {/* vData: data with hidden projects filtered out (for all views except ProjectsView) */}
+      {(()=>{const vData={...data,projects:(data.projects||[]).filter(p=>!p.hidden)};return<div style={{animation:"fadeIn 0.3s ease"}}>
+        {view==="overview"&&<OverviewView data={vData} save={save} auditLog={auditLog} user={user}/>}
         {view==="projects"&&<ProjectsView data={data} save={save} auditLog={auditLog} user={user}/>}
-        {view==="kanban"&&<KanbanView data={data} save={save} auditLog={auditLog} user={user}/>}
-        {view==="taskfilter"&&<TaskFilterView data={data} save={save} auditLog={auditLog} user={user}/>}
-        {view==="gantt"&&<GanttView data={data}/>}
-        {view==="recurring"&&<RecurringTasksView data={data} save={save} user={user} taskInstancesHook={taskInstancesHook} auditLog={auditLog}/>}
-        {view==="risks"&&<RiskView data={data} save={save} auditLog={auditLog} user={user}/>}
-        {view==="schedule"&&<ScheduleView data={data} save={save}/>}
-        {view==="reports"&&<ReportsView data={data}/>}
-        {view==="deliverables"&&<DeliverablesView data={data} user={user} deliverablesHook={deliverablesHook} auditLog={auditLog}/>}
+        {view==="kanban"&&<KanbanView data={vData} save={save} auditLog={auditLog} user={user}/>}
+        {view==="taskfilter"&&<TaskFilterView data={vData} save={save} auditLog={auditLog} user={user}/>}
+        {view==="timeline"&&<TimelineView data={vData} save={save} auditLog={auditLog} user={user}/>}
+        {view==="gantt"&&<GanttView data={vData}/>}
+        {view==="recurring"&&<RecurringTasksView data={vData} save={save} user={user} taskInstancesHook={taskInstancesHook} auditLog={auditLog}/>}
+        {view==="risks"&&<RiskView data={vData} save={save} auditLog={auditLog} user={user}/>}
+        {view==="schedule"&&<ScheduleView data={vData} save={save}/>}
+        {view==="reports"&&<ReportsView data={vData}/>}
+        {view==="deliverables"&&<DeliverablesView data={vData} user={user} deliverablesHook={deliverablesHook} auditLog={auditLog}/>}
         {view==="staff"&&<StaffView data={data} save={save} auditLog={auditLog} user={user}/>}
         {view==="audit"&&<AuditLogView auditLog={auditLog} staff={data.staff}/>}
-      </div>
+      </div>;})()}
     </main>
   </div>;
 }
@@ -1693,7 +1696,11 @@ function OverviewView({data,save,auditLog,user}){
 // ─── Projects ───────────────────────────
 function ProjectsView({data,save,auditLog,user}){
   const{projects,staff}=data;const sorted=[...projects].sort((a,b)=>a.priority-b.priority);
-  const[expanded,setExpanded]=useState({});const[modal,setModal]=useState(null);
+  const[expanded,setExpanded]=useState({});const[modal,setModal]=useState(null);const[showHidden,setShowHidden]=useState(false);
+  const tapRef=useRef({count:0,timer:null});
+  const handleTitleTap=()=>{tapRef.current.count++;clearTimeout(tapRef.current.timer);if(tapRef.current.count>=5){setShowHidden(h=>!h);tapRef.current.count=0;}else{tapRef.current.timer=setTimeout(()=>{tapRef.current.count=0;},1500);}};
+  const visibleSorted=showHidden?sorted:sorted.filter(p=>!p.hidden);
+  const toggleHide=(pid,e)=>{e.stopPropagation();save({...data,projects:projects.map(p=>p.id===pid?{...p,hidden:!p.hidden}:p)});};
   const toggle=k=>setExpanded(p=>({...p,[k]:!p[k]}));
   const Arrow=({open})=><div style={{transition:T.transition,transform:open?"rotate(90deg)":"rotate(0)",display:"flex",alignItems:"center"}}><ChevronRight size={14} color={T.text3}/></div>;
 
@@ -1712,10 +1719,10 @@ function ProjectsView({data,save,auditLog,user}){
 
   return<div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22}}>
-      <h2 style={{margin:0,fontSize:22,fontWeight:700,color:T.text1,display:"flex",alignItems:"center",gap:8}}><Settings size={22}/> 项目管理</h2>
+      <h2 onClick={handleTitleTap} style={{margin:0,fontSize:22,fontWeight:700,color:T.text1,display:"flex",alignItems:"center",gap:8,cursor:"default",userSelect:"none"}}><Settings size={22}/> 项目管理</h2>
       <Btn onClick={()=>setModal({type:"project",target:{id:uid(),name:"",priority:projects.length,isKey:false,color:T.accent}})}><Plus size={14}/> 新建项目</Btn>
     </div>
-    {sorted.map(p=>{const pOpen=expanded[p.id]!==false;const pa=getAllActions([p]);const pPct=pa.length?Math.round(pa.filter(a=>a.progress===2).length/pa.length*100):0;
+    {visibleSorted.map(p=>{const pOpen=expanded[p.id]!==false;const pa=getAllActions([p]);const pPct=pa.length?Math.round(pa.filter(a=>a.progress===2).length/pa.length*100):0;
       return<Card key={p.id} highlight={p.isKey} style={{marginBottom:14,padding:0,overflow:"hidden"}}>
         <div onClick={()=>toggle(p.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"14px 20px",cursor:"pointer",background:T.card,borderBottom:pOpen?`1px solid ${T.borderLight}`:"none",transition:T.transition}}>
           <Arrow open={pOpen}/><ProjectDot color={p.color} size={12}/>
@@ -1729,6 +1736,7 @@ function ProjectsView({data,save,auditLog,user}){
           </div>
           <span style={{fontSize:12,fontWeight:700,color:T.accent}}>{pPct}%</span>
           <div style={{display:"flex",gap:4}} onClick={e=>e.stopPropagation()}>
+            {showHidden&&<Btn small v="ghost" onClick={(e)=>toggleHide(p.id,e)} style={{color:p.hidden?T.danger:T.text3}}>{p.hidden?<EyeOff size={12}/>:<Eye size={12}/>}</Btn>}
             <Btn small v="ghost" onClick={()=>setModal({type:"project",target:{...p}})}><Pencil size={12}/></Btn>
             <Btn small v="danger" onClick={()=>delProject(p.id)}><Trash2 size={12}/></Btn>
           </div>
@@ -2172,6 +2180,195 @@ function GanttView({data}){
             </div>;})}
         </div>)}
       </Card>}
+  </div>;
+}
+
+// ─── Timeline View (linear chronological) ───
+function TimelineView({data,save,auditLog,user}){
+  const{projects,staff}=data;
+  const actions=getAllActions(projects);
+  const[projFilter,setProjFilter]=useState("all");
+  const[staffFilter,setStaffFilter]=useState("all");
+  const[statusFilter,setStatusFilter]=useState("all");
+  const[groupBy,setGroupBy]=useState("date"); // date | project | staff
+
+  // Only tasks with deadlines, sorted by date
+  const sorted=actions.filter(a=>{
+    if(!a.deadline)return false;
+    if(projFilter!=="all"&&a.projectId!==projFilter)return false;
+    if(staffFilter!=="all"&&a.staffId!==staffFilter)return false;
+    if(statusFilter!=="all"&&a.progress!==+statusFilter)return false;
+    return true;
+  }).sort((a,b)=>new Date(a.deadline)-new Date(b.deadline));
+
+  const changeStatus=(actionId,newProgress)=>{
+    const act=actions.find(a=>a.id===actionId);
+    const oldStatus=STATUS.find(s=>s.v===act?.progress);
+    const newStatus=STATUS.find(s=>s.v===newProgress);
+    save({...data,projects:updateActionInProjects(projects,actionId,{progress:newProgress})});
+    if(auditLog&&user)auditLog.addLog(user.id,user.name,"status_change","任务",act?.name||"",{before_value:oldStatus?.l,after_value:newStatus?.l});
+  };
+
+  const today=new Date();today.setHours(0,0,0,0);
+
+  // Group tasks
+  const groups=[];
+  if(groupBy==="date"){
+    const byDate={};
+    sorted.forEach(a=>{const k=a.deadline;if(!byDate[k])byDate[k]=[];byDate[k].push(a);});
+    Object.entries(byDate).forEach(([date,items])=>{
+      const d=new Date(date);d.setHours(0,0,0,0);
+      const diff=Math.round((d-today)/86400000);
+      let tag="",tagColor=T.text3;
+      if(diff<0){tag=`已过 ${-diff} 天`;tagColor=T.danger;}
+      else if(diff===0){tag="今天";tagColor=T.danger;}
+      else if(diff===1){tag="明天";tagColor=T.warning;}
+      else if(diff<=7){tag=`${diff} 天后`;tagColor=T.warning;}
+      else{tag=`${diff} 天后`;tagColor=T.text3;}
+      const weekDay=["周日","周一","周二","周三","周四","周五","周六"][d.getDay()];
+      groups.push({key:date,label:`${date} ${weekDay}`,tag,tagColor,items,isPast:diff<0,isToday:diff===0});
+    });
+  }else if(groupBy==="project"){
+    const byProj={};
+    sorted.forEach(a=>{if(!byProj[a.projectId])byProj[a.projectId]={name:a.projectName,color:a.projectColor,items:[]};byProj[a.projectId].items.push(a);});
+    Object.entries(byProj).forEach(([id,g])=>groups.push({key:id,label:g.name,tag:`${g.items.length} 项`,tagColor:g.color,items:g.items,color:g.color}));
+  }else{
+    const byStaff={};
+    sorted.forEach(a=>{const sid=a.staffId||"unassigned";if(!byStaff[sid])byStaff[sid]={name:staff.find(s=>s.id===sid)?.name||"未分配",color:staff.find(s=>s.id===sid)?.color||T.text3,items:[]};byStaff[sid].items.push(a);});
+    Object.entries(byStaff).forEach(([id,g])=>groups.push({key:id,label:g.name,tag:`${g.items.length} 项`,tagColor:g.color,items:g.items,color:g.color}));
+  }
+
+  // Find today's position for the "today" marker
+  const todayStr=today.toISOString().slice(0,10);
+
+  const FilterPill=({label,active,onClick})=><button onClick={onClick} style={{padding:"5px 12px",borderRadius:20,fontSize:11,fontWeight:600,border:`1.5px solid ${active?T.accent:T.border}`,background:active?T.accentLight:T.card,color:active?T.accent:T.text2,cursor:"pointer",transition:T.transition}}>{label}</button>;
+
+  return<div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+      <h2 style={{margin:0,fontSize:22,fontWeight:700,color:T.text1,display:"flex",alignItems:"center",gap:8}}><CalendarClock size={22}/> 时间线</h2>
+      <div style={{display:"flex",gap:6}}>
+        {[{v:"date",l:"按日期"},{v:"project",l:"按项目"},{v:"staff",l:"按人员"}].map(g=>
+          <button key={g.v} onClick={()=>setGroupBy(g.v)} style={{padding:"5px 14px",borderRadius:16,fontSize:11,fontWeight:600,border:`1.5px solid ${groupBy===g.v?T.accent:T.border}`,background:groupBy===g.v?T.accentLight:T.card,color:groupBy===g.v?T.accent:T.text2,cursor:"pointer",transition:T.transition}}>{g.l}</button>
+        )}
+      </div>
+    </div>
+
+    {/* Filters */}
+    <Card style={{padding:"14px 18px",marginBottom:16}}>
+      <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+          <span style={{fontSize:11,fontWeight:700,color:T.text2}}>项目</span>
+          <FilterPill label="全部" active={projFilter==="all"} onClick={()=>setProjFilter("all")}/>
+          {projects.map(p=><FilterPill key={p.id} label={<span style={{display:"flex",alignItems:"center",gap:3}}><ProjectDot color={p.color} size={6}/>{p.name}</span>} active={projFilter===p.id} onClick={()=>setProjFilter(p.id)}/>)}
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+          <span style={{fontSize:11,fontWeight:700,color:T.text2}}>人员</span>
+          <FilterPill label="全部" active={staffFilter==="all"} onClick={()=>setStaffFilter("all")}/>
+          {staff.map(s=><FilterPill key={s.id} label={s.name} active={staffFilter===s.id} onClick={()=>setStaffFilter(s.id)}/>)}
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+          <span style={{fontSize:11,fontWeight:700,color:T.text2}}>状态</span>
+          <FilterPill label="全部" active={statusFilter==="all"} onClick={()=>setStatusFilter("all")}/>
+          {STATUS.map(s=><FilterPill key={s.v} label={s.l} active={statusFilter===String(s.v)} onClick={()=>setStatusFilter(String(s.v))}/>)}
+        </div>
+      </div>
+    </Card>
+
+    {/* Stats */}
+    <div style={{display:"flex",gap:12,marginBottom:18}}>
+      {[
+        {l:"总任务",v:sorted.length,c:T.accent},
+        {l:"已完成",v:sorted.filter(a=>a.progress===2).length,c:T.success},
+        {l:"进行中",v:sorted.filter(a=>a.progress===1).length,c:T.warning},
+        {l:"未开始",v:sorted.filter(a=>a.progress===0).length,c:T.text3},
+        {l:"已逾期",v:sorted.filter(a=>{const d=new Date(a.deadline);d.setHours(0,0,0,0);return d<today&&a.progress!==2;}).length,c:T.danger},
+      ].map(s=><Card key={s.l} style={{flex:1,padding:"12px 16px",textAlign:"center"}}>
+        <div style={{fontSize:22,fontWeight:800,color:s.c}}>{s.v}</div>
+        <div style={{fontSize:11,color:T.text3}}>{s.l}</div>
+      </Card>)}
+    </div>
+
+    {/* Timeline */}
+    {sorted.length===0?
+      <Card style={{textAlign:"center",padding:48,color:T.text3}}><CalendarClock size={40} strokeWidth={1} style={{marginBottom:12}}/><div>暂无带截止日期的任务</div></Card>:
+      <div style={{position:"relative"}}>
+        {/* Vertical line */}
+        <div style={{position:"absolute",left:19,top:0,bottom:0,width:2,background:T.borderLight,zIndex:0}}/>
+
+        {groups.map((group,gi)=>{
+          const isDateGroup = groupBy==="date";
+          return<div key={group.key} style={{marginBottom:24}}>
+            {/* Group header */}
+            <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12,position:"relative",zIndex:1}}>
+              <div style={{width:40,height:40,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,
+                background: group.isToday ? T.danger : group.isPast ? T.text3+"20" : (group.color || T.accent + "15"),
+                border: `2px solid ${group.isToday ? T.danger : group.isPast ? T.text3 : (group.color || T.accent)}`,
+                color: group.isToday ? "#fff" : group.isPast ? T.text3 : (group.color || T.accent)}}>
+                {isDateGroup
+                  ? <span style={{fontSize:12,fontWeight:800}}>{group.label.split("-").pop().split(" ")[0]}</span>
+                  : groupBy==="project" ? <ProjectDot color={group.color} size={10}/>
+                  : <span style={{fontSize:14,fontWeight:700}}>{group.label.slice(0,1)}</span>}
+              </div>
+              <div>
+                <div style={{fontSize:14,fontWeight:700,color:group.isToday?T.danger:group.isPast?T.text3:T.text1,display:"flex",alignItems:"center",gap:8}}>
+                  {group.label}
+                  <Badge color={group.tagColor} small>{group.tag}</Badge>
+                </div>
+                <div style={{fontSize:11,color:T.text3}}>{group.items.length} 项任务 · {group.items.filter(a=>a.progress===2).length} 已完成</div>
+              </div>
+            </div>
+
+            {/* Tasks in this group */}
+            <div style={{marginLeft:19,paddingLeft:28,borderLeft:`2px solid ${group.isToday?T.danger+"40":T.borderLight}`,display:"flex",flexDirection:"column",gap:6}}>
+              {group.items.map(a=>{
+                const person=staff.find(s=>s.id===a.staffId);
+                const ds=getDeadlineStatus(a.deadline,a.progress);
+                const pri=PRIORITY_OPTS.find(p=>p.v===(a.actionPriority??2));
+                const st=STATUS.find(s=>s.v===a.progress);
+                const isOverdue=ds&&ds.level==="overdue"&&a.progress!==2;
+                return<div key={a.id} style={{
+                  position:"relative",padding:"10px 16px",borderRadius:T.radiusSm,
+                  background:isOverdue?T.danger+"08":a.progress===2?T.success+"06":T.card,
+                  border:`1px solid ${isOverdue?T.danger+"30":a.progress===2?T.success+"20":T.borderLight}`,
+                  transition:T.transition,
+                }}>
+                  {/* Connector dot */}
+                  <div style={{position:"absolute",left:-34,top:16,width:8,height:8,borderRadius:"50%",
+                    background:a.progress===2?T.success:a.progress===1?T.warning:isOverdue?T.danger:T.border,
+                    border:`2px solid ${T.card}`}}/>
+
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    {/* Status toggle */}
+                    <div onClick={()=>changeStatus(a.id,a.progress===2?0:a.progress+1)} style={{cursor:"pointer",color:st?.c,flexShrink:0}} title={`${STATUS[(a.progress+1)%3]?.l}`}>
+                      <StatusIcon v={a.progress} size={16}/>
+                    </div>
+                    {/* Info */}
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                        <span style={{fontSize:13,fontWeight:600,color:a.progress===2?T.text3:T.text1,textDecoration:a.progress===2?"line-through":"none"}}>{a.name}</span>
+                        <Badge color={pri?.c} small>{pri?.l?.split(" ")[0]}</Badge>
+                        {isOverdue&&<Badge color={T.danger} small>{ds.label}</Badge>}
+                        {ds&&ds.level==="today"&&<Badge color={T.danger} small>今日截止</Badge>}
+                      </div>
+                      <div style={{fontSize:11,color:T.text3,display:"flex",alignItems:"center",gap:6,marginTop:3}}>
+                        <span style={{display:"flex",alignItems:"center",gap:2}}><ProjectDot color={a.projectColor} size={5}/>{a.projectName}</span>
+                        <span>{a.catName}</span>
+                        <span>{a.resName}</span>
+                        {groupBy!=="date"&&a.deadline&&<span style={{display:"flex",alignItems:"center",gap:2}}><CalendarDays size={10}/>{a.deadline}</span>}
+                      </div>
+                    </div>
+                    {/* Right */}
+                    <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+                      {person&&<span style={{display:"flex",alignItems:"center",gap:3,fontSize:11,color:T.text2}}><Avatar name={person.name} color={person.color} size={18}/>{person.name}</span>}
+                      <span style={{fontSize:11,color:T.text3}}>{a.hours}h</span>
+                    </div>
+                  </div>
+                </div>;
+              })}
+            </div>
+          </div>;
+        })}
+      </div>}
   </div>;
 }
 
