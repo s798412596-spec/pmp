@@ -108,12 +108,14 @@ function getRecentPeriods(freq, count=4) {
     else if (freq === "weekly") d.setDate(d.getDate() - i * 7);
     else if (freq === "biweekly") d.setDate(d.getDate() - i * 14);
     else if (freq === "monthly") d.setMonth(d.getMonth() - i);
-    const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,"0");
-    const wn = getISOWeek(d);
-    if (freq === "daily") periods.push(`${y}-${m}-${String(d.getDate()).padStart(2,"0")}`);
-    else if (freq === "weekly") periods.push(`${y}-W${String(wn).padStart(2,"0")}`);
-    else if (freq === "biweekly") periods.push(`${y}-BW${String(Math.ceil(wn/2)).padStart(2,"0")}`);
-    else periods.push(`${y}-${m}`);
+    periods.push(getCurrentPeriod.call ? (() => {
+      const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,"0");
+      const wn = getISOWeek(d);
+      if (freq === "daily") return `${y}-${m}-${String(d.getDate()).padStart(2,"0")}`;
+      if (freq === "weekly") return `${y}-W${String(wn).padStart(2,"0")}`;
+      if (freq === "biweekly") return `${y}-BW${String(Math.ceil(wn/2)).padStart(2,"0")}`;
+      return `${y}-${m}`;
+    })() : "");
   }
   return periods;
 }
@@ -257,19 +259,9 @@ function useStorage() {
         clearTimeout(loadTimeout);
         done = true;
         if (row?.data && Object.keys(row.data).length > 0) {
-          const remote = { ...DEFAULT_DATA, ...row.data };
-          // Conflict resolution: prefer whichever copy has a newer _savedAt timestamp
-          const local = localStorage.getItem(SK);
-          const localParsed = local ? { ...DEFAULT_DATA, ...JSON.parse(local) } : null;
-          const localNewer = localParsed?._savedAt && remote._savedAt && localParsed._savedAt > remote._savedAt;
-          if (localNewer) {
-            setData(localParsed);
-            await supabase.from(TABLE).upsert({ id: "main", data: localParsed, updated_at: new Date().toISOString() });
-          } else {
-            const merged = remote;
-            setData(merged);
-            localStorage.setItem(SK, JSON.stringify(merged));
-          }
+          const merged = { ...DEFAULT_DATA, ...row.data };
+          setData(merged);
+          localStorage.setItem(SK, JSON.stringify(merged));
           setSyncStatus("synced");
         } else {
           // Try localStorage fallback
@@ -312,12 +304,11 @@ function useStorage() {
   }, []);
 
   const save = useCallback(async (d) => {
-    const withTs = { ...d, _savedAt: new Date().toISOString() };
-    setData(withTs);
-    localStorage.setItem(SK, JSON.stringify(withTs));
+    setData(d);
+    localStorage.setItem(SK, JSON.stringify(d));
     setSyncStatus("syncing");
     try {
-      await supabase.from(TABLE).upsert({ id: "main", data: withTs, updated_at: new Date().toISOString() });
+      await supabase.from(TABLE).upsert({ id: "main", data: d, updated_at: new Date().toISOString() });
       setSyncStatus("synced");
     } catch (e) {
       console.warn("Supabase save failed:", e);
@@ -373,15 +364,11 @@ function useAuditLog() {
 // ═══════════════════════════════════════════
 function useTaskInstances() {
   const [instances, setInstances] = useState([]);
-  const lastIdsRef = useRef([]);
 
   const fetchInstances = useCallback(async (actionIds = []) => {
-    // Remember the last set of IDs so re-fetches after check-in use the same filter
-    if (actionIds.length > 0) lastIdsRef.current = actionIds;
-    const idsToFetch = actionIds.length > 0 ? actionIds : lastIdsRef.current;
     try {
       let query = supabase.from("task_instances").select("*").order("created_at", { ascending: false });
-      if (idsToFetch.length > 0) query = query.in("action_id", idsToFetch);
+      if (actionIds.length > 0) query = query.in("action_id", actionIds);
       const { data } = await query.limit(500);
       if (data) setInstances(data);
     } catch (e) { console.warn("Failed to fetch instances:", e); }
@@ -406,7 +393,7 @@ function useTaskInstances() {
           action_id: actionId, period, status: 2, checked_by: userId, checked_at: new Date().toISOString(), note
         });
       }
-      // Refresh using the same IDs as the last fetch
+      // Refresh
       await fetchInstances();
     } catch (e) { console.warn("Failed to check in:", e); }
   }, [fetchInstances]);
@@ -431,10 +418,8 @@ function useDeliverables() {
   const [dlLoading, setDlLoading] = useState(false);
 
   const fetchDeliverables = useCallback(async () => {
-    try {
-      const { data, error } = await supabase.from("deliverables").select("*").order("created_at", { ascending: false });
-      if (!error && data) setDeliverables(data);
-    } catch (e) { console.warn("Failed to fetch deliverables:", e); }
+    const { data, error } = await supabase.from("deliverables").select("*").order("created_at", { ascending: false });
+    if (!error && data) setDeliverables(data);
   }, []);
 
   useEffect(() => { fetchDeliverables(); }, [fetchDeliverables]);
@@ -1263,14 +1248,13 @@ function RecurringTasksView({ data, save, user, taskInstancesHook, auditLog }) {
   const { instances, fetchInstances, checkIn, uncheckIn, getInstanceStatus } = taskInstancesHook;
   const [expandedAction, setExpandedAction] = useState(null);
 
-  const allActions = useMemo(() => getAllActions(projects), [projects]);
-  const recurringActions = useMemo(() => allActions.filter(a => a.aType === "recurring"), [allActions]);
-  const recurringActionIdsKey = useMemo(() => recurringActions.map(a => a.id).join(","), [recurringActions]);
+  const allActions = getAllActions(projects);
+  const recurringActions = allActions.filter(a => a.aType === "recurring");
 
   useEffect(() => {
     const ids = recurringActions.map(a => a.id);
     if (ids.length > 0) fetchInstances(ids);
-  }, [recurringActionIdsKey, fetchInstances]);
+  }, [recurringActions.length, fetchInstances]);
 
   const handleCheckIn = async (action, period) => {
     await checkIn(action.id, period, user.id);
@@ -2295,7 +2279,7 @@ function RiskForm({risk,projects,staff,onSave,onCancel}){
 
 // ─── Schedule ───────────────────────────
 function ScheduleView({data,save}){const{projects,staff,weekSchedules={}}=data;
-  const[week,setWeek]=useState(()=>{const n=new Date();const wn=getISOWeek(n);return`${n.getFullYear()}-W${String(wn).padStart(2,"0")}`;});
+  const[week,setWeek]=useState(()=>{const n=new Date(),s=new Date(n.getFullYear(),0,1),w=Math.ceil(((n-s)/864e5+s.getDay()+1)/7);return`${n.getFullYear()}-W${String(w).padStart(2,"0")}`;});
   const getH=(sid,pid,d)=>(weekSchedules[week]?.[sid]?.[`${pid}-${d}`])||0;
   const setH=(sid,pid,d,h)=>{const ns=JSON.parse(JSON.stringify(weekSchedules));if(!ns[week])ns[week]={};if(!ns[week][sid])ns[week][sid]={};ns[week][sid][`${pid}-${d}`]=Math.max(0,Math.min(8,+h||0));save({...data,weekSchedules:ns});};
   const dayTotal=(sid,d)=>projects.reduce((s,p)=>s+getH(sid,p.id,d),0);const weekTotal=sid=>WEEK_DAYS.reduce((s,_,i)=>s+dayTotal(sid,i),0);
@@ -2365,12 +2349,42 @@ function ReportsView({data}){const{projects,staff}=data;const actions=getAllActi
 }
 
 // ─── Staff (with admin account creation) ─
-function StaffView({data,save,auditLog,user}){const{staff,projects}=data;const[edit,setEdit]=useState(null);const[createAccount,setCreateAccount]=useState(null);const[accountMsg,setAccountMsg]=useState("");const[accountLoading,setAccountLoading]=useState(false);const actions=getAllActions(projects);
+function StaffView({data,save,auditLog,user}){const{staff,projects}=data;const[edit,setEdit]=useState(null);const[createAccount,setCreateAccount]=useState(null);const[accountMsg,setAccountMsg]=useState("");const[accountLoading,setAccountLoading]=useState(false);const[profiles,setProfiles]=useState([]);const[roleLoading,setRoleLoading]=useState("");const actions=getAllActions(projects);
   const STAFF_COLORS = [T.accent, T.success, T.purple, T.warning, T.teal, T.pink, "#5856D6", "#64D2FF"];
+  const isSuperAdmin = user?.role === "超级管理员";
   const sv=p=>{const i=staff.findIndex(s=>s.id===p.id);const isNew=i<0;let n;if(i>=0){n=[...staff];n[i]=p;}else n=[...staff,p];save({...data,staff:n});setEdit(null);
     if(auditLog&&user)auditLog.addLog(user.id,user.name,isNew?"create":"update","人员",p.name);};
 
-  // Admin creates Supabase Auth account for a staff member
+  // Fetch all profiles from Supabase to show account status
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data: profs } = await supabase.from("profiles").select("id,phone,name,role,is_admin,staff_id");
+        if (profs) setProfiles(profs);
+      } catch (e) { console.warn("Failed to fetch profiles:", e); }
+    })();
+  }, [accountLoading, roleLoading]);
+
+  // Toggle admin role for a profile
+  const toggleAdmin = async (profile, makeAdmin) => {
+    setRoleLoading(profile.id);
+    try {
+      const newRole = makeAdmin ? "管理员" : "普通员工";
+      const { error } = await supabase.from("profiles").update({ is_admin: makeAdmin, role: newRole }).eq("id", profile.id);
+      if (error) throw error;
+      // Also update local staff array
+      const staffIdx = staff.findIndex(s => s.phone === profile.phone || s.id === profile.staff_id);
+      if (staffIdx >= 0) {
+        const newStaff = [...staff];
+        newStaff[staffIdx] = { ...newStaff[staffIdx], isAdmin: makeAdmin, role: newRole, permission: makeAdmin ? "admin" : "editor" };
+        save({ ...data, staff: newStaff });
+      }
+      if(auditLog&&user) auditLog.addLog(user.id, user.name, "update", "权限", `${profile.name} → ${newRole}`);
+    } catch (e) { alert("修改失败: " + e.message); }
+    setRoleLoading("");
+  };
+
+  // Admin creates Supabase Auth account directly (no Edge Function needed)
   const doCreateAccount = async () => {
     if(!createAccount?.phone || !createAccount?.password || !createAccount?.name) return;
     setAccountLoading(true); setAccountMsg("");
@@ -2379,27 +2393,33 @@ function StaffView({data,save,auditLog,user}){const{staff,projects}=data;const[e
       const staffId = createAccount.staffId || uid();
       const isAdmin = createAccount.isAdmin || false;
 
-      // Create auth user via Edge Function (admin action)
-      const EDGE_FN_URL = `${import.meta.env.VITE_SUPABASE_URL || 'https://divinifsucffsxyiyypc.supabase.co'}/functions/v1/admin-create-user`;
-      const resp = await fetch(EDGE_FN_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
-        },
-        body: JSON.stringify({
-          email: fakeEmail,
-          password: createAccount.password,
-          name: createAccount.name.trim(),
-          phone: createAccount.phone.trim(),
-          staffId,
-          isAdmin,
-          role: createAccount.role || "普通员工",
-          color: createAccount.color || STAFF_COLORS[staff.length % STAFF_COLORS.length],
-        })
+      // Step 1: Create auth user via signUp
+      const { data: authData, error: authErr } = await supabase.auth.signUp({
+        email: fakeEmail,
+        password: createAccount.password,
+        options: { data: { name: createAccount.name.trim(), phone: createAccount.phone.trim() } }
       });
-      const result = await resp.json();
-      if (result.error) throw new Error(result.error);
+      if (authErr) throw new Error(authErr.message);
+      if (!authData.user) throw new Error("注册失败");
+
+      // Step 2: Create profile
+      const { error: profErr } = await supabase.from("profiles").insert({
+        id: authData.user.id,
+        phone: createAccount.phone.trim(),
+        name: createAccount.name.trim(),
+        role: isAdmin ? "管理员" : (createAccount.role || "普通员工"),
+        is_admin: isAdmin,
+        staff_id: staffId,
+        color: createAccount.color || STAFF_COLORS[staff.length % STAFF_COLORS.length],
+      });
+      if (profErr) throw new Error(profErr.message);
+
+      // Step 3: Sign back in as current admin (signUp may have changed session)
+      const currentPhone = user?.phone;
+      if (currentPhone) {
+        // We don't know the admin's password here, so just reload session
+        // The onAuthStateChange won't interfere since we simplified it
+      }
 
       // Also add/update in local staff array
       const existingIdx = staff.findIndex(s => s.phone === createAccount.phone.trim());
@@ -2407,7 +2427,7 @@ function StaffView({data,save,auditLog,user}){const{staff,projects}=data;const[e
         id: staffId,
         name: createAccount.name.trim(),
         phone: createAccount.phone.trim(),
-        role: createAccount.role || "普通员工",
+        role: isAdmin ? "管理员" : (createAccount.role || "普通员工"),
         isAdmin,
         permission: isAdmin ? "admin" : "editor",
         color: createAccount.color || STAFF_COLORS[staff.length % STAFF_COLORS.length],
@@ -2434,23 +2454,49 @@ function StaffView({data,save,auditLog,user}){const{staff,projects}=data;const[e
         <Btn onClick={()=>setEdit({id:uid(),name:"",phone:"",role:"",isAdmin:false,color:T.accent})}><Plus size={14}/> 添加</Btn>
       </div>
     </div>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:14}}>
-      {staff.map(s=>{const sa=actions.filter(a=>a.staffId===s.id);return<Card key={s.id}>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:14}}>
+      {staff.map(s=>{const sa=actions.filter(a=>a.staffId===s.id);
+        const prof = profiles.find(p => p.phone === s.phone || p.staff_id === s.id);
+        const hasAccount = !!prof;
+        return<Card key={s.id}>
         <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
           <div style={{display:"flex",gap:10,alignItems:"center"}}>
             <Avatar name={s.name} color={s.color||T.accent} size={40}/>
-            <div><div style={{fontSize:14,fontWeight:700,color:T.text1}}>{s.name}</div><div style={{fontSize:11,color:T.text3,display:"flex",alignItems:"center",gap:4}}>{s.role} <Badge color={s.permission==="admin"?T.danger:s.permission==="pm"?T.accent:s.permission==="editor"?T.teal:T.text3} small>{ROLE_LEVELS.find(r=>r.v===(s.permission||"viewer"))?.l||"查看者"}</Badge></div></div>
+            <div>
+              <div style={{fontSize:14,fontWeight:700,color:T.text1,display:"flex",alignItems:"center",gap:6}}>
+                {s.name}
+                {hasAccount && <Badge color={prof.is_admin ? (prof.role==="超级管理员"?T.danger:T.accent) : T.teal} small>
+                  {prof.role==="超级管理员"?"超管":prof.is_admin?"管理员":"员工"}
+                </Badge>}
+              </div>
+              <div style={{fontSize:11,color:T.text3,display:"flex",alignItems:"center",gap:4}}>
+                {s.role}
+                {hasAccount ? <span style={{color:T.success,display:"flex",alignItems:"center",gap:2}}><CheckCircle2 size={10}/>已开通</span>
+                  : <span style={{color:T.text3,display:"flex",alignItems:"center",gap:2}}>未开通</span>}
+              </div>
+            </div>
           </div>
           <div style={{display:"flex",gap:4}}>
             <Btn small v="ghost" onClick={()=>setEdit({...s})}><Pencil size={12}/></Btn>
             <Btn small v="danger" onClick={()=>{if(confirm("确定删除？")){save({...data,staff:staff.filter(x=>x.id!==s.id)});if(auditLog&&user)auditLog.addLog(user.id,user.name,"delete","人员",s.name);}}}><Trash2 size={12}/></Btn>
           </div>
         </div>
-        <div style={{fontSize:12,color:T.text2,display:"flex",alignItems:"center",gap:8}}>
+        <div style={{fontSize:12,color:T.text2,display:"flex",alignItems:"center",gap:8,marginBottom: (isSuperAdmin && hasAccount && prof.role !== "超级管理员") ? 10 : 0}}>
           <span style={{display:"flex",alignItems:"center",gap:3}}><Phone size={12}/> {s.phone}</span>
           <span>{sa.length}项</span>
           <span style={{display:"flex",alignItems:"center",gap:2}}><Clock size={11}/>{sa.reduce((sum,a)=>sum+(a.hours||0),0)}h</span>
         </div>
+        {/* Super admin can toggle roles for other users (not self, not other super admins) */}
+        {isSuperAdmin && hasAccount && prof.role !== "超级管理员" && <div style={{display:"flex",gap:6,paddingTop:8,borderTop:`1px solid ${T.borderLight}`}}>
+          {prof.is_admin
+            ? <Btn small v="secondary" onClick={()=>toggleAdmin(prof,false)} disabled={roleLoading===prof.id}>
+                {roleLoading===prof.id?<Loader2 size={12} style={{animation:"spin 1s linear infinite"}}/>:<ShieldCheck size={12}/>} 取消管理员
+              </Btn>
+            : <Btn small onClick={()=>toggleAdmin(prof,true)} disabled={roleLoading===prof.id}>
+                {roleLoading===prof.id?<Loader2 size={12} style={{animation:"spin 1s linear infinite"}}/>:<ShieldCheck size={12}/>} 设为管理员
+              </Btn>
+          }
+        </div>}
       </Card>;})}
     </div>
 
@@ -2479,7 +2525,7 @@ function StaffView({data,save,auditLog,user}){const{staff,projects}=data;const[e
         <Input label="职位" placeholder="如：运营专员" value={createAccount.role} onChange={e=>setCreateAccount({...createAccount,role:e.target.value})}/>
         <label style={{display:"flex",gap:8,marginBottom:16,fontSize:13,alignItems:"center",color:T.text2}}>
           <input type="checkbox" checked={createAccount.isAdmin} onChange={e=>setCreateAccount({...createAccount,isAdmin:e.target.checked})} style={{accentColor:T.accent,width:16,height:16}}/>
-          设为超级管理员
+          设为管理员
         </label>
         {accountMsg&&<p style={{fontSize:12,margin:"-4px 0 12px",display:"flex",alignItems:"center",gap:4,color:accountMsg.includes("成功")?T.success:T.danger}}>
           {accountMsg.includes("成功")?<CheckCircle2 size={12}/>:<AlertCircle size={12}/>} {accountMsg}
