@@ -108,14 +108,12 @@ function getRecentPeriods(freq, count=4) {
     else if (freq === "weekly") d.setDate(d.getDate() - i * 7);
     else if (freq === "biweekly") d.setDate(d.getDate() - i * 14);
     else if (freq === "monthly") d.setMonth(d.getMonth() - i);
-    periods.push(getCurrentPeriod.call ? (() => {
-      const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,"0");
-      const wn = getISOWeek(d);
-      if (freq === "daily") return `${y}-${m}-${String(d.getDate()).padStart(2,"0")}`;
-      if (freq === "weekly") return `${y}-W${String(wn).padStart(2,"0")}`;
-      if (freq === "biweekly") return `${y}-BW${String(Math.ceil(wn/2)).padStart(2,"0")}`;
-      return `${y}-${m}`;
-    })() : "");
+    const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,"0");
+    const wn = getISOWeek(d);
+    if (freq === "daily") periods.push(`${y}-${m}-${String(d.getDate()).padStart(2,"0")}`);
+    else if (freq === "weekly") periods.push(`${y}-W${String(wn).padStart(2,"0")}`);
+    else if (freq === "biweekly") periods.push(`${y}-BW${String(Math.ceil(wn/2)).padStart(2,"0")}`);
+    else periods.push(`${y}-${m}`);
   }
   return periods;
 }
@@ -259,9 +257,19 @@ function useStorage() {
         clearTimeout(loadTimeout);
         done = true;
         if (row?.data && Object.keys(row.data).length > 0) {
-          const merged = { ...DEFAULT_DATA, ...row.data };
-          setData(merged);
-          localStorage.setItem(SK, JSON.stringify(merged));
+          const remote = { ...DEFAULT_DATA, ...row.data };
+          // Conflict resolution: prefer whichever copy has a newer _savedAt timestamp
+          const local = localStorage.getItem(SK);
+          const localParsed = local ? { ...DEFAULT_DATA, ...JSON.parse(local) } : null;
+          const localNewer = localParsed?._savedAt && remote._savedAt && localParsed._savedAt > remote._savedAt;
+          if (localNewer) {
+            setData(localParsed);
+            await supabase.from(TABLE).upsert({ id: "main", data: localParsed, updated_at: new Date().toISOString() });
+          } else {
+            const merged = remote;
+            setData(merged);
+            localStorage.setItem(SK, JSON.stringify(merged));
+          }
           setSyncStatus("synced");
         } else {
           // Try localStorage fallback
@@ -304,11 +312,12 @@ function useStorage() {
   }, []);
 
   const save = useCallback(async (d) => {
-    setData(d);
-    localStorage.setItem(SK, JSON.stringify(d));
+    const withTs = { ...d, _savedAt: new Date().toISOString() };
+    setData(withTs);
+    localStorage.setItem(SK, JSON.stringify(withTs));
     setSyncStatus("syncing");
     try {
-      await supabase.from(TABLE).upsert({ id: "main", data: d, updated_at: new Date().toISOString() });
+      await supabase.from(TABLE).upsert({ id: "main", data: withTs, updated_at: new Date().toISOString() });
       setSyncStatus("synced");
     } catch (e) {
       console.warn("Supabase save failed:", e);
@@ -364,11 +373,15 @@ function useAuditLog() {
 // ═══════════════════════════════════════════
 function useTaskInstances() {
   const [instances, setInstances] = useState([]);
+  const lastIdsRef = useRef([]);
 
   const fetchInstances = useCallback(async (actionIds = []) => {
+    // Remember the last set of IDs so re-fetches after check-in use the same filter
+    if (actionIds.length > 0) lastIdsRef.current = actionIds;
+    const idsToFetch = actionIds.length > 0 ? actionIds : lastIdsRef.current;
     try {
       let query = supabase.from("task_instances").select("*").order("created_at", { ascending: false });
-      if (actionIds.length > 0) query = query.in("action_id", actionIds);
+      if (idsToFetch.length > 0) query = query.in("action_id", idsToFetch);
       const { data } = await query.limit(500);
       if (data) setInstances(data);
     } catch (e) { console.warn("Failed to fetch instances:", e); }
@@ -393,7 +406,7 @@ function useTaskInstances() {
           action_id: actionId, period, status: 2, checked_by: userId, checked_at: new Date().toISOString(), note
         });
       }
-      // Refresh
+      // Refresh using the same IDs as the last fetch
       await fetchInstances();
     } catch (e) { console.warn("Failed to check in:", e); }
   }, [fetchInstances]);
@@ -418,8 +431,10 @@ function useDeliverables() {
   const [dlLoading, setDlLoading] = useState(false);
 
   const fetchDeliverables = useCallback(async () => {
-    const { data, error } = await supabase.from("deliverables").select("*").order("created_at", { ascending: false });
-    if (!error && data) setDeliverables(data);
+    try {
+      const { data, error } = await supabase.from("deliverables").select("*").order("created_at", { ascending: false });
+      if (!error && data) setDeliverables(data);
+    } catch (e) { console.warn("Failed to fetch deliverables:", e); }
   }, []);
 
   useEffect(() => { fetchDeliverables(); }, [fetchDeliverables]);
@@ -1248,13 +1263,14 @@ function RecurringTasksView({ data, save, user, taskInstancesHook, auditLog }) {
   const { instances, fetchInstances, checkIn, uncheckIn, getInstanceStatus } = taskInstancesHook;
   const [expandedAction, setExpandedAction] = useState(null);
 
-  const allActions = getAllActions(projects);
-  const recurringActions = allActions.filter(a => a.aType === "recurring");
+  const allActions = useMemo(() => getAllActions(projects), [projects]);
+  const recurringActions = useMemo(() => allActions.filter(a => a.aType === "recurring"), [allActions]);
+  const recurringActionIdsKey = useMemo(() => recurringActions.map(a => a.id).join(","), [recurringActions]);
 
   useEffect(() => {
     const ids = recurringActions.map(a => a.id);
     if (ids.length > 0) fetchInstances(ids);
-  }, [recurringActions.length, fetchInstances]);
+  }, [recurringActionIdsKey, fetchInstances]);
 
   const handleCheckIn = async (action, period) => {
     await checkIn(action.id, period, user.id);
@@ -2279,7 +2295,7 @@ function RiskForm({risk,projects,staff,onSave,onCancel}){
 
 // ─── Schedule ───────────────────────────
 function ScheduleView({data,save}){const{projects,staff,weekSchedules={}}=data;
-  const[week,setWeek]=useState(()=>{const n=new Date(),s=new Date(n.getFullYear(),0,1),w=Math.ceil(((n-s)/864e5+s.getDay()+1)/7);return`${n.getFullYear()}-W${String(w).padStart(2,"0")}`;});
+  const[week,setWeek]=useState(()=>{const n=new Date();const wn=getISOWeek(n);return`${n.getFullYear()}-W${String(wn).padStart(2,"0")}`;});
   const getH=(sid,pid,d)=>(weekSchedules[week]?.[sid]?.[`${pid}-${d}`])||0;
   const setH=(sid,pid,d,h)=>{const ns=JSON.parse(JSON.stringify(weekSchedules));if(!ns[week])ns[week]={};if(!ns[week][sid])ns[week][sid]={};ns[week][sid][`${pid}-${d}`]=Math.max(0,Math.min(8,+h||0));save({...data,weekSchedules:ns});};
   const dayTotal=(sid,d)=>projects.reduce((s,p)=>s+getH(sid,p.id,d),0);const weekTotal=sid=>WEEK_DAYS.reduce((s,_,i)=>s+dayTotal(sid,i),0);
