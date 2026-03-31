@@ -250,8 +250,8 @@ function useStorage() {
       setSyncStatus("error");
       setLoading(false);
     };
-    // Timeout: if Supabase doesn't respond in 5s, fall back to localStorage
-    const loadTimeout = setTimeout(fallbackToLocal, 5000);
+    // Timeout: if Supabase doesn't respond in 10s, fall back to localStorage
+    const loadTimeout = setTimeout(fallbackToLocal, 10000);
     (async () => {
       try {
         const { data: row, error } = await supabase.from(TABLE).select("data").eq("id", "main").single();
@@ -2976,7 +2976,7 @@ export default function App() {
   // Listen for Supabase Auth state changes
   useEffect(() => {
     // Check existing session with timeout to prevent infinite loading
-    const authTimeout = setTimeout(() => { setAuthLoading(false); }, 5000);
+    const authTimeout = setTimeout(() => { setAuthLoading(false); }, 10000);
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       try {
         if (session?.user) {
