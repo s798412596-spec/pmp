@@ -4,7 +4,7 @@ import {
   Mountain, LayoutDashboard, Settings, ClipboardList, CalendarDays, BarChart3, Users,
   ChevronRight, ChevronDown, Plus, Pencil, Trash2, X, Check, CheckCircle2, Circle,
   CircleDot, Smartphone, Store, MessageCircle, Radio, Pin, RefreshCw, Target, Clock,
-  FileText, AlertCircle, Bot, Send, Loader2, Copy, ListTodo, MessageSquare,
+  FileText, AlertCircle, Bot, Send, Loader2, Copy, ListTodo,
   UserCircle, Phone, Star, Search, CalendarClock, TrendingUp,
   ShieldAlert, History, CalendarCheck, Filter, Download, TriangleAlert, LogOut,
   GitBranch, Milestone, GanttChartSquare, AlertOctagon, Link2, Paperclip, Eye,
@@ -702,7 +702,7 @@ function DeadlineAlerts({ actions, staff }) {
 // ─── AI CONFIG PANEL ─────────────────────
 // ═══════════════════════════════════════════
 const AI_PROVIDERS = [
-  { v: "gemini", l: "Google Gemini", models: ["gemini-3.1-pro-preview"] },
+  { v: "gemini", l: "Google Gemini", models: ["gemini-3.1-pro-preview", "gemini-3-flash", "gemini-3.1-flash-lite"] },
   { v: "anthropic", l: "Anthropic Claude", models: ["claude-sonnet-4-6-20260217", "claude-opus-4-6-20260205", "claude-haiku-4-5-20251015"] },
   { v: "openai", l: "OpenAI", models: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.3-instant"] },
   { v: "deepseek", l: "DeepSeek", models: ["deepseek-v3.2", "deepseek-r1", "deepseek-v3"] },
@@ -773,41 +773,21 @@ function AIAssistant({data,save,auditLog,user}) {
   const {projects,staff} = data;
   const [input,setInput] = useState("");
   const [showAIConfig, setShowAIConfig] = useState(false);
-  const [showHistory, setShowHistory] = useState(false);
   const [loading,setLoading] = useState(false);
-  const [chatMessages,setChatMessages] = useState(()=>{try{return JSON.parse(localStorage.getItem("sm-ai-chat")||"[]");}catch{return [];}});
-  const [chatHistory,setChatHistory] = useState(()=>{try{return JSON.parse(localStorage.getItem("sm-ai-history")||"[]");}catch{return [];}});
+  const [chatMessages,setChatMessages] = useState(()=>{try{return JSON.parse(localStorage.getItem("sm-ai-chat")||"[]");}catch{return[];}});
   const [pendingOps,setPendingOps] = useState(null);
+  const [chatHistory,setChatHistory] = useState(()=>{try{return JSON.parse(localStorage.getItem("sm-ai-history")||"[]");}catch{return[];}});
+  const [showHistory,setShowHistory] = useState(false);
   const chatEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const inputRef = useRef(null);
 
-  useEffect(()=>{try{localStorage.setItem("sm-ai-chat",JSON.stringify(chatMessages));}catch{}
-    if(chatContainerRef.current){chatContainerRef.current.scrollTop=chatContainerRef.current.scrollHeight;}},[chatMessages,loading]);
-
-  const saveToHistory = (msgs) => {
-    if(!msgs||msgs.length===0) return;
-    const firstUser = msgs.find(m=>m.role==="user");
-    const title = firstUser ? firstUser.content.slice(0,40)+(firstUser.content.length>40?"...":"") : "对话记录";
-    const session = {id:Date.now().toString(),title,startedAt:Date.now(),messages:msgs};
-    const updated = [session,...chatHistory].slice(0,30);
-    setChatHistory(updated);
-    try{localStorage.setItem("sm-ai-history",JSON.stringify(updated));}catch{}
-  };
-
-  const loadSession = (session) => {
-    if(chatMessages.length>0) saveToHistory(chatMessages);
-    setChatMessages(session.messages);
-    setPendingOps(null);
-    setShowHistory(false);
-  };
-
-  const deleteSession = (id,e) => {
-    e.stopPropagation();
-    const updated = chatHistory.filter(s=>s.id!==id);
-    setChatHistory(updated);
-    try{localStorage.setItem("sm-ai-history",JSON.stringify(updated));}catch{}
-  };
+  // Persist chat messages
+  useEffect(()=>{try{localStorage.setItem("sm-ai-chat",JSON.stringify(chatMessages));}catch{}},[chatMessages]);
+  // Persist chat history
+  useEffect(()=>{try{localStorage.setItem("sm-ai-history",JSON.stringify(chatHistory));}catch{}},[chatHistory]);
+  // Scroll chat container (not page)
+  useEffect(()=>{if(chatContainerRef.current)chatContainerRef.current.scrollTop=chatContainerRef.current.scrollHeight;},[chatMessages,loading]);
 
   const getStaffName = (sid) => staff.find(s=>s.id===sid)?.name || "未分配";
   const getProjectName = (pid) => projects.find(p=>p.id===pid)?.name || (pid === "__new__" ? "新项目" : "未知项目");
@@ -816,7 +796,7 @@ function AIAssistant({data,save,auditLog,user}) {
     const projSummary = projects.map(p => {
       const cats = (p.categories||[]).map(c => {
         const ress = (c.resources||[]).map(r => {
-          const acts = (r.actions||[]).map(a => `          动作: "${a.name}" (id:${a.id}, aType:${a.aType}, staffId:${a.staffId||""}, deadline:${a.deadline||""})`).join("\n");
+          const acts = (r.actions||[]).map(a => `        动作: "${a.name}" (id:${a.id}, staffId:${a.staffId||""}, deadline:${a.deadline||""}, aType:${a.aType||""}, freq:${a.freq||""}, progress:${a.progress||0})`).join("\n");
           return `      资源: "${r.name}" (id:${r.id}, type:${r.type}, platform:${r.platform||""}, owner:${r.owner})\n${acts}`;
         }).join("\n");
         return `    类别: "${c.name}" (id:${c.id}, cat:${c.cat})\n${ress}`;
@@ -831,7 +811,7 @@ function AIAssistant({data,save,auditLog,user}) {
 1. **严格关联**：系统是四级结构 L1项目 → L2工作类别 → L3资源/账号 → L4执行动作，每个层级必须挂载到上级
 2. **不猜测留空**：用户没有明确提到的信息一律留空（""或0），等待用户后续补充。绝不自行推断截止日期、优先级、工时、频率等
 3. **多轮追问**：当信息不完整时，主动追问缺失的关键信息。每次最多追问3个问题
-4. **全面管理**：你可以创建、修改、删除项目/类别/资源/动作，所有变更都会在用户确认后执行
+4. **全面管理**：你可以创建、修改、删除项目/类别/资源/动作，所有变更用户确认后执行
 
 ## 当前数据
 项目和资源：
@@ -852,7 +832,7 @@ ${staffSummary}
 你必须始终返回纯JSON（不要markdown代码块），格式如下：
 
 {
-  "message": "你对用户说的自然语言回复（只能是中文纯文字，绝对不能包含任何JSON代码、花括号、引号键值对等，operations结构体只放在operations字段中）",
+  "message": "你对用户说的话（确认理解、追问、总结等）",
   "needsMoreInfo": true或false,
   "questions": ["追问问题1", "追问问题2"],
   "operations": [操作列表，当信息足够时才填写],
@@ -895,17 +875,17 @@ ${staffSummary}
 4. add_action — 向已有资源添加动作（L4）
 { "type": "add_action", "projectId": "已有项目id", "categoryId": "已有类别id", "resourceId": "已有资源id", "action": {"name":"","aType":"","freq":"","count":"","staffId":"","hours":0,"deadline":"","note":""} }
 
-5. delete_action — 删除指定动作（通过当前数据中的id）
-{ "type": "delete_action", "projectId": "项目id", "categoryId": "类别id", "resourceId": "资源id", "actionId": "动作id", "actionName": "动作名称（用于预览）" }
+5. delete_action — 删除指定动作
+{ "type": "delete_action", "projectId": "项目id", "categoryId": "类别id", "resourceId": "资源id", "actionId": "动作id", "actionName": "动作名（用于显示）" }
 
-6. delete_resource — 删除指定资源及其所有动作
-{ "type": "delete_resource", "projectId": "项目id", "categoryId": "类别id", "resourceId": "资源id", "resourceName": "资源名称（用于预览）" }
+6. delete_resource — 删除资源及其下全部动作
+{ "type": "delete_resource", "projectId": "项目id", "categoryId": "类别id", "resourceId": "资源id", "resourceName": "资源名" }
 
 7. delete_project — 删除整个项目
-{ "type": "delete_project", "projectId": "项目id", "projectName": "项目名称（用于预览）" }
+{ "type": "delete_project", "projectId": "项目id", "projectName": "项目名" }
 
-8. update_action — 修改动作的字段（只传需要修改的字段）
-{ "type": "update_action", "projectId": "项目id", "categoryId": "类别id", "resourceId": "资源id", "actionId": "动作id", "actionName": "动作名称（用于预览）", "updates": {"staffId":"新负责人id","deadline":"新截止日","note":"备注"} }
+8. update_action — 修改动作字段（支持修改 staffId/deadline/note/name/hours/freq/count/aType）
+{ "type": "update_action", "projectId": "项目id", "categoryId": "类别id", "resourceId": "资源id", "actionId": "动作id", "actionName": "动作名", "updates": {"staffId":"新人员id","deadline":"2026-05-01"} }
 
 ### milestones 格式：
 [{ "projectId": "项目id或__new__", "name": "里程碑名称", "date": "2026-04-15或留空" }]
@@ -921,7 +901,7 @@ ${staffSummary}
 - 自动识别潜在风险（如同一人任务过多、截止日太紧、依赖链过长）
 - 当信息足够时 needsMoreInfo=false 并给出完整 operations
 - 当信息不够时 needsMoreInfo=true，operations 可以为空或给出部分（标注哪些字段留空待补）
-- **重要**：message 字段永远只写一两句中文自然语言（如"已找到滕丞的3个任务，请确认删除"），绝对不能把 operations 里的 JSON 结构放进 message 字段`;
+- message 字段永远只写一两句中文自然语言（如"已找到滕丞的3个任务，请确认删除"），绝对不能把 operations 里的 JSON 结构放进 message 字段，message 只能是中文纯文字，绝对不能包含任何 JSON 代码`;
   };
 
   const callAI = async (userText) => {
@@ -943,11 +923,16 @@ ${staffSummary}
         content: m.role === "assistant" ? (m.rawContent || m.content) : m.content
       }));
 
+      // Use the current user's session JWT for auth (reject if no session)
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("请先登录后再使用AI助手");
+      const authToken = session.access_token;
+
       const resp = await fetch(EDGE_FN_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          "Authorization": `Bearer ${authToken}`,
         },
         body: JSON.stringify({ provider, model, system: buildSystemPrompt(), messages: apiMessages })
       });
@@ -977,39 +962,29 @@ ${staffSummary}
             .replace(/,\s*([}\]])/g, "$1");
           parsed = JSON.parse(fixed);
         } catch (e2) {
-          // If still fails, show the raw AI response as a plain message
-          parsed = { message: raw || "AI未能生成有效响应，请重试", operations: [], needsMoreInfo: false, questions: [] };
+          // If still fails, create a friendly message from the raw text
+          parsed = { message: raw.slice(0, 500), operations: [], needsMoreInfo: true, questions: ["请重新描述你的需求，我来帮你处理"] };
         }
       }
 
-      // Sanitize the message field — strip out any JSON code blocks or raw JSON the AI accidentally embedded
+      // Sanitize message: filter out JSON fragments that AI sometimes puts in message field
       const sanitizeMsg = (msg) => {
-        if(!msg) return "";
-        // Remove ```json ... ``` or ``` ... ``` blocks
-        let s = msg.replace(/```[\s\S]*?```/g, "").trim();
-        // Remove lines that look like JSON structure
-        s = s.split("\n").filter(line => {
+        if (!msg) return "已解析完成";
+        return msg.split("\n").filter(line => {
           const t = line.trim();
-          if(!t) return false;
-          // Pure structural chars: { } [ ] , or combinations
-          if(/^[\{\}\[\],]+$/.test(t)) return false;
-          // Lines starting with { or [ (JSON objects/arrays, any length)
-          if(/^[\{\[]/.test(t)) return false;
-          // JSON key-value: "key": ...
-          if(/^\s*"[a-zA-Z_]+"\s*:/.test(t)) return false;
-          // Lines ending with { (nested open brace like "project": {)
-          if(/:\s*[\{\[],?\s*$/.test(t)) return false;
-          // Closing braces with optional comma
-          if(/^[\}\]],?\s*$/.test(t)) return false;
+          if (!t) return true;
+          if (/^[{}\[\],\s]+$/.test(t)) return false;
+          if (/^[{\[]/.test(t)) return false;
+          if (/[{\[]$/.test(t)) return false;
+          if (/^"?\w+"?\s*:/.test(t)) return false;
+          if (/^[}\]],?\s*$/.test(t)) return false;
           return true;
-        }).join("\n").trim();
-        return s || "";
+        }).join("\n").trim() || "已解析完成";
       };
-      const cleanedMsg = sanitizeMsg(parsed.message);
 
       const assistantMsg = {
         role: "assistant",
-        content: cleanedMsg || (parsed.operations?.length > 0 ? "已为您整理好方案，请查看下方操作列表并确认。" : "已解析完成"),
+        content: sanitizeMsg(parsed.message),
         rawContent: raw,
         parsed,
         hasOps: (parsed.operations||[]).length > 0,
@@ -1094,7 +1069,7 @@ ${staffSummary}
           return {...p, categories: [...(p.categories||[]), newCat]};
         });
       }
-      if (op.type === "delete_action") {
+      if (op.type === "delete_action" && op.actionId) {
         opNames.push(`删除: ${op.actionName||op.actionId}`);
         newProjects = newProjects.map(p => {
           if (p.id !== op.projectId) return p;
@@ -1107,7 +1082,7 @@ ${staffSummary}
           })};
         });
       }
-      if (op.type === "delete_resource") {
+      if (op.type === "delete_resource" && op.resourceId) {
         opNames.push(`删除资源: ${op.resourceName||op.resourceId}`);
         newProjects = newProjects.map(p => {
           if (p.id !== op.projectId) return p;
@@ -1117,12 +1092,12 @@ ${staffSummary}
           })};
         });
       }
-      if (op.type === "delete_project") {
+      if (op.type === "delete_project" && op.projectId) {
         opNames.push(`删除项目: ${op.projectName||op.projectId}`);
         newProjects = newProjects.filter(p => p.id !== op.projectId);
         newRisks = newRisks.filter(r => r.projectId !== op.projectId);
       }
-      if (op.type === "update_action" && op.updates) {
+      if (op.type === "update_action" && op.actionId && op.updates) {
         opNames.push(`修改: ${op.actionName||op.actionId}`);
         newProjects = newProjects.map(p => {
           if (p.id !== op.projectId) return p;
@@ -1155,7 +1130,10 @@ ${staffSummary}
 
     save({...data, projects: newProjects, risks: newRisks});
     if (auditLog && user) {
-      auditLog.addLog(user.id, user.name, "ai_create", "任务", opNames.join(", "), { count: parsed.operations?.length });
+      const hasDelete = (parsed.operations||[]).some(o=>o.type?.startsWith("delete"));
+      const hasUpdate = (parsed.operations||[]).some(o=>o.type==="update_action");
+      const action = hasDelete ? "ai_delete" : hasUpdate ? "ai_update" : "ai_create";
+      auditLog.addLog(user.id, user.name, action, "任务", opNames.join(", "), { count: parsed.operations?.length });
     }
   };
 
@@ -1171,7 +1149,17 @@ ${staffSummary}
     setPendingOps({...pendingOps, operations:pendingOps.operations.filter((_,i)=>i!==idx)});
   };
 
-  const resetChat = () => { saveToHistory(chatMessages); setChatMessages([]); setPendingOps(null); setInput(""); localStorage.removeItem("sm-ai-chat"); };
+  const saveCurrentToHistory = () => {
+    if (chatMessages.length === 0) return;
+    const firstUser = chatMessages.find(m => m.role === "user");
+    const title = firstUser ? firstUser.content.slice(0, 40) : "对话";
+    const entry = { id: uid(), title, time: new Date().toISOString(), messages: chatMessages, count: chatMessages.length };
+    setChatHistory(prev => [entry, ...prev].slice(0, 30));
+  };
+  const resetChat = () => { saveCurrentToHistory(); setChatMessages([]); setPendingOps(null); setInput(""); };
+  const loadHistory = (entry) => { saveCurrentToHistory(); setChatMessages(entry.messages||[]); setPendingOps(null); setShowHistory(false); };
+  const deleteHistory = (id, e) => { e.stopPropagation(); setChatHistory(prev => prev.filter(h => h.id !== id)); };
+  const clearAllHistory = () => { setChatHistory([]); };
 
   const OpCard = ({op,idx}) => {
     if(op.type==="add_project"){const p=op.project||{};
@@ -1213,46 +1201,23 @@ ${staffSummary}
         <div style={{display:"flex",alignItems:"center",gap:8}}><ListTodo size={14} color={CAT_COLORS[c.cat]||T.text3}/><span style={{fontSize:13,fontWeight:600,color:T.text1}}>新类别: {c.name}</span><Badge color={CAT_COLORS[c.cat]||T.text3} small>{c.cat}</Badge><div style={{flex:1}}/><button onClick={()=>removeOp(idx)} style={{background:"none",border:"none",color:T.danger,cursor:"pointer",padding:4}}><X size={12}/></button></div>
       </div>;
     }
-    if(op.type==="delete_action"){
-      return<div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"#FFF0F0",borderRadius:T.radiusSm,borderLeft:`3px solid ${T.danger}`}}>
-        <Trash2 size={14} color={T.danger}/>
-        <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:T.danger}}>删除动作: {op.actionName||op.actionId}</div>
-          <div style={{fontSize:11,color:T.text3}}>{getProjectName(op.projectId)}</div>
+    if(op.type==="delete_action"||op.type==="delete_resource"||op.type==="delete_project"){
+      const name=op.actionName||op.resourceName||op.projectName||"未知";
+      const label=op.type==="delete_project"?"删除项目":op.type==="delete_resource"?"删除资源":"删除动作";
+      return<div style={{padding:"10px 14px",background:"#FEF2F2",borderRadius:T.radiusSm,borderLeft:`3px solid ${T.danger}`}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}><Trash2 size={14} color={T.danger}/><span style={{fontSize:13,fontWeight:600,color:T.danger}}>{label}: {name}</span>
+          {op.type==="delete_project"&&<Badge color={T.danger} small>⚠ 不可撤销</Badge>}
+          <div style={{flex:1}}/><button onClick={()=>removeOp(idx)} style={{background:"none",border:"none",color:T.text3,cursor:"pointer",padding:4}}><X size={12}/></button>
         </div>
-        <button onClick={()=>removeOp(idx)} style={{background:"none",border:"none",color:T.text3,cursor:"pointer",padding:4}}><X size={12}/></button>
-      </div>;
-    }
-    if(op.type==="delete_resource"){
-      return<div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"#FFF0F0",borderRadius:T.radiusSm,borderLeft:`3px solid ${T.danger}`}}>
-        <Trash2 size={14} color={T.danger}/>
-        <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:T.danger}}>删除资源: {op.resourceName||op.resourceId}</div>
-          <div style={{fontSize:11,color:T.text3}}>{getProjectName(op.projectId)} · 含所有动作</div>
-        </div>
-        <button onClick={()=>removeOp(idx)} style={{background:"none",border:"none",color:T.text3,cursor:"pointer",padding:4}}><X size={12}/></button>
-      </div>;
-    }
-    if(op.type==="delete_project"){
-      return<div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"#FFF0F0",borderRadius:T.radiusSm,borderLeft:`3px solid ${T.danger}`}}>
-        <Trash2 size={14} color={T.danger}/>
-        <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:T.danger}}>删除整个项目: {op.projectName||getProjectName(op.projectId)}</div>
-          <div style={{fontSize:11,color:T.text3}}>将删除项目及其所有数据，操作不可撤销</div>
-        </div>
-        <button onClick={()=>removeOp(idx)} style={{background:"none",border:"none",color:T.text3,cursor:"pointer",padding:4}}><X size={12}/></button>
       </div>;
     }
     if(op.type==="update_action"){
-      const updateFields = Object.entries(op.updates||{}).map(([k,v])=>{
-        if(k==="staffId") return `负责人→${getStaffName(v)}`;
-        if(k==="deadline") return `截止→${v}`;
-        if(k==="note") return `备注→${v}`;
-        return `${k}→${v}`;
-      }).join(" · ");
-      return<div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"#FFF8EC",borderRadius:T.radiusSm,borderLeft:`3px solid ${T.warning}`}}>
-        <Pencil size={14} color={T.warning}/>
-        <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:T.text1}}>修改: {op.actionName||op.actionId}</div>
-          <div style={{fontSize:11,color:T.text3}}>{getProjectName(op.projectId)} · {updateFields}</div>
+      const fields=Object.entries(op.updates||{}).map(([k,v])=>`${k}→${v}`).join(", ");
+      return<div style={{padding:"10px 14px",background:"#FFF8EC",borderRadius:T.radiusSm,borderLeft:`3px solid ${T.warning}`}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}><Pencil size={14} color={T.warning}/><span style={{fontSize:13,fontWeight:600,color:T.text1}}>修改: {op.actionName||op.actionId}</span>
+          <div style={{flex:1}}/><button onClick={()=>removeOp(idx)} style={{background:"none",border:"none",color:T.danger,cursor:"pointer",padding:4}}><X size={12}/></button>
         </div>
-        <button onClick={()=>removeOp(idx)} style={{background:"none",border:"none",color:T.text3,cursor:"pointer",padding:4}}><X size={12}/></button>
+        <div style={{fontSize:11,color:T.text2,marginTop:4,paddingLeft:22}}>{fields}</div>
       </div>;
     }
     return null;
@@ -1267,40 +1232,30 @@ ${staffSummary}
         <p style={{margin:0,fontSize:12,color:T.text3}}>多轮对话 · 自动创建项目和任务 · 里程碑/风险联动</p>
       </div>
       {chatMessages.length>0&&<Btn small v="secondary" onClick={resetChat}><RefreshCw size={12}/> 新对话</Btn>}
-      <Btn small v="ghost" onClick={()=>setShowHistory(v=>!v)} style={{color:showHistory?T.accent:T.text3,position:"relative"}}>
-        <History size={14}/>
-        {chatHistory.length>0&&<span style={{position:"absolute",top:-4,right:-4,width:14,height:14,borderRadius:7,background:T.accent,color:"#fff",fontSize:9,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}>{chatHistory.length>9?"9+":chatHistory.length}</span>}
-      </Btn>
+      <div style={{position:"relative"}}>
+        <button onClick={()=>setShowHistory(!showHistory)} style={{background:"none",border:"none",cursor:"pointer",color:T.text3,padding:6,borderRadius:6,display:"flex",alignItems:"center",position:"relative",transition:T.transition}} onMouseEnter={e=>e.currentTarget.style.background=T.borderLight} onMouseLeave={e=>e.currentTarget.style.background="none"}>
+          <History size={16}/>
+          {chatHistory.length>0&&<span style={{position:"absolute",top:-2,right:-2,background:T.accent,color:"#fff",fontSize:8,fontWeight:700,borderRadius:8,padding:"1px 4px",minWidth:14,textAlign:"center"}}>{chatHistory.length}</span>}
+        </button>
+        {showHistory&&<div style={{position:"absolute",right:0,top:"100%",marginTop:4,width:280,maxHeight:320,overflowY:"auto",background:T.card,borderRadius:T.radius,border:`1px solid ${T.border}`,boxShadow:T.shadowMd,zIndex:20,padding:8}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 8px",marginBottom:4}}>
+            <span style={{fontSize:12,fontWeight:700,color:T.text1}}>历史对话</span>
+            {chatHistory.length>0&&<button onClick={clearAllHistory} style={{fontSize:10,color:T.danger,background:"none",border:"none",cursor:"pointer"}}>清空全部</button>}
+          </div>
+          {chatHistory.length===0&&<div style={{padding:20,textAlign:"center",color:T.text3,fontSize:12}}>暂无历史</div>}
+          {chatHistory.map(h=><div key={h.id} onClick={()=>loadHistory(h)} style={{padding:"8px 10px",borderRadius:T.radiusSm,cursor:"pointer",transition:T.transition,display:"flex",alignItems:"center",gap:8}} onMouseEnter={e=>e.currentTarget.style.background=T.borderLight} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:12,fontWeight:600,color:T.text1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{h.title}</div>
+              <div style={{fontSize:10,color:T.text3}}>{new Date(h.time).toLocaleString("zh-CN",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"})} · {h.count}条</div>
+            </div>
+            <button onClick={(e)=>deleteHistory(h.id,e)} style={{background:"none",border:"none",color:T.text3,cursor:"pointer",padding:2,flexShrink:0}} onMouseEnter={e=>e.currentTarget.style.color=T.danger} onMouseLeave={e=>e.currentTarget.style.color=T.text3}><X size={12}/></button>
+          </div>)}
+        </div>}
+      </div>
       <Btn small v="ghost" onClick={()=>setShowAIConfig(true)} style={{color:T.text3}}><Settings size={14}/></Btn>
     </div>
 
     <AIConfigPanel open={showAIConfig} onClose={()=>setShowAIConfig(false)} />
-
-    {/* History Panel */}
-    {showHistory&&<div style={{borderBottom:`1px solid ${T.borderLight}`,background:T.bg}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 24px 6px"}}>
-        <span style={{fontSize:12,fontWeight:700,color:T.text2,display:"flex",alignItems:"center",gap:6}}><History size={13}/> 历史对话 ({chatHistory.length})</span>
-        {chatHistory.length>0&&<button onClick={()=>{if(window.confirm("确定清空所有历史记录？")){setChatHistory([]);localStorage.removeItem("sm-ai-history");}}} style={{fontSize:11,color:T.danger,background:"none",border:"none",cursor:"pointer",padding:"2px 6px"}}>清空全部</button>}
-      </div>
-      {chatHistory.length===0?<div style={{padding:"20px 24px",textAlign:"center",color:T.text3,fontSize:12}}>暂无历史记录</div>:
-      <div style={{maxHeight:260,overflowY:"auto",padding:"0 12px 10px"}}>
-        {chatHistory.map(s=>{
-          const d=new Date(s.startedAt);
-          const dateStr=`${d.getMonth()+1}/${d.getDate()} ${d.getHours().toString().padStart(2,"0")}:${d.getMinutes().toString().padStart(2,"0")}`;
-          const msgCount=s.messages.length;
-          return<div key={s.id} onClick={()=>loadSession(s)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderRadius:T.radiusSm,cursor:"pointer",transition:T.transition,marginBottom:2}}
-            onMouseEnter={e=>e.currentTarget.style.background=T.borderLight} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-            <MessageSquare size={13} color={T.text3} style={{flexShrink:0}}/>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:12,color:T.text1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.title}</div>
-              <div style={{fontSize:10,color:T.text3,marginTop:1}}>{dateStr} · {msgCount} 条消息</div>
-            </div>
-            <button onClick={e=>deleteSession(s.id,e)} title="删除" style={{background:"none",border:"none",color:T.text3,cursor:"pointer",padding:4,flexShrink:0,opacity:0.6,lineHeight:1}}
-              onMouseEnter={e=>e.currentTarget.style.color=T.danger} onMouseLeave={e=>e.currentTarget.style.color=T.text3}><X size={12}/></button>
-          </div>;
-        })}
-      </div>}
-    </div>}
 
     {/* Chat area */}
     <div ref={chatContainerRef} style={{maxHeight:480,overflowY:"auto",padding:"16px 24px"}}>
@@ -1384,7 +1339,7 @@ ${staffSummary}
           style={{flex:1,padding:"10px 14px",borderRadius:T.radius,border:`1.5px solid ${T.border}`,fontSize:13,outline:"none",fontFamily:T.font,resize:"none",boxSizing:"border-box",background:T.card,color:T.text1,lineHeight:1.5,transition:T.transition}}
           onFocus={e=>{e.target.style.borderColor=T.accent;e.target.style.boxShadow=`0 0 0 3px ${T.accent}20`;}}
           onBlur={e=>{e.target.style.borderColor=T.border;e.target.style.boxShadow="none";}}
-          onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing){e.preventDefault();callAI(input);}}}
+          onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing&&!e.nativeEvent?.isComposing){e.preventDefault();callAI(input);}}}
         />
         <Btn onClick={()=>callAI(input)} disabled={!input.trim()||loading} style={{height:40,padding:"0 18px"}}>
           {loading?<Loader2 size={16} style={{animation:"spin 1s linear infinite"}}/>:<Send size={16}/>}
@@ -1409,15 +1364,15 @@ function AuditLogView({ auditLog, staff }) {
 
   const actionLabels = {
     create: "创建", update: "更新", delete: "删除", status_change: "状态变更",
-    ai_create: "AI创建", check_in: "打卡", uncheck: "取消打卡",
+    ai_create: "AI创建", ai_delete: "AI删除", ai_update: "AI修改", sync: "同步", check_in: "打卡", uncheck: "取消打卡",
   };
   const actionColors = {
     create: T.success, update: T.accent, delete: T.danger, status_change: T.warning,
-    ai_create: T.purple, check_in: T.success, uncheck: T.text3,
+    ai_create: T.purple, ai_delete: T.danger, ai_update: T.warning, sync: T.teal, check_in: T.success, uncheck: T.text3,
   };
   const actionIcons = {
     create: Plus, update: Pencil, delete: Trash2, status_change: RefreshCw,
-    ai_create: Bot, check_in: CalendarCheck, uncheck: X,
+    ai_create: Bot, ai_delete: Bot, ai_update: Bot, sync: RefreshCw, check_in: CalendarCheck, uncheck: X,
   };
 
   const filtered = filter === "all" ? logs : logs.filter(l => l.action === filter);
@@ -2930,37 +2885,28 @@ function StaffView({data,save,auditLog,user}){const{staff,projects}=data;const[e
     setAccountLoading(false);
   };
 
-  // Find profiles that registered but aren't in data.staff yet
-  const unsyncedProfiles = profiles.filter(p =>
-    !staff.some(s => s.phone === p.phone || s.id === p.staff_id)
-  );
-
-  const syncProfiles = () => {
-    if(unsyncedProfiles.length === 0) return;
-    const newEntries = unsyncedProfiles.map(p => ({
-      id: p.staff_id || uid(),
-      name: p.name || "未知",
-      phone: p.phone || "",
-      role: p.role || "普通员工",
-      isAdmin: p.is_admin || false,
-      permission: p.is_admin ? "admin" : "editor",
-      color: STAFF_COLORS[staff.length % STAFF_COLORS.length],
-    }));
-    save({...data, staff: [...staff, ...newEntries]});
-    if(auditLog && user) auditLog.addLog(user.id, user.name, "create", "人员", newEntries.map(e=>e.name).join("、"));
+  // Detect unsynced profiles (registered but not in staff list)
+  const unsyncedProfiles = profiles.filter(p => {
+    return !(staff||[]).some(s => s.phone === p.phone || s.id === p.staff_id);
+  });
+  const syncAllProfiles = () => {
+    const newStaff = [...(staff||[])];
+    unsyncedProfiles.forEach(p => {
+      newStaff.push({ id: p.staff_id || uid(), name: p.name, phone: p.phone, role: p.role || "普通员工", isAdmin: p.is_admin || false, permission: p.is_admin ? "admin" : "editor", color: PIE_COLORS[newStaff.length % PIE_COLORS.length] });
+    });
+    save({...data, staff: newStaff});
+    if (auditLog && user) auditLog.addLog(user.id, user.name, "sync", "人员", `同步${unsyncedProfiles.length}个未关联账号`);
   };
 
   return<div>
-    {unsyncedProfiles.length > 0 && (
-      <div style={{marginBottom:16,padding:"12px 16px",background:"#FFF8EC",borderRadius:T.radiusSm,border:`1px solid ${T.warning}40`,display:"flex",alignItems:"center",gap:12}}>
-        <AlertCircle size={16} color={T.warning} style={{flexShrink:0}}/>
-        <div style={{flex:1}}>
-          <div style={{fontSize:13,fontWeight:600,color:T.text1}}>发现 {unsyncedProfiles.length} 位已注册但未同步的成员</div>
-          <div style={{fontSize:11,color:T.text3,marginTop:2}}>{unsyncedProfiles.map(p=>p.name).join("、")}</div>
-        </div>
-        <Btn small onClick={syncProfiles}><UserPlus size={12}/> 一键同步</Btn>
+    {unsyncedProfiles.length>0&&<div style={{padding:"12px 18px",background:"#FFF8EC",borderRadius:T.radius,border:`1px solid ${T.warning}30`,marginBottom:16,display:"flex",alignItems:"center",gap:12}}>
+      <AlertCircle size={18} color={T.warning}/>
+      <div style={{flex:1}}>
+        <div style={{fontSize:13,fontWeight:600,color:T.text1}}>发现 {unsyncedProfiles.length} 个已注册但未在员工列表中的账号</div>
+        <div style={{fontSize:11,color:T.text2,marginTop:2}}>{unsyncedProfiles.map(p=>p.name).join("、")}</div>
       </div>
-    )}
+      <Btn small onClick={syncAllProfiles}><RefreshCw size={12}/> 一键同步</Btn>
+    </div>}
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22}}>
       <h2 style={{margin:0,fontSize:22,fontWeight:700,color:T.text1,display:"flex",alignItems:"center",gap:8}}><Users size={22}/> 人员管理</h2>
       <div style={{display:"flex",gap:8}}>
@@ -3383,13 +3329,9 @@ function LoginScreen({onLogin, appData, save}) {
           if (cancelled) return;
           clearTimeout(timeout);
           if (newProfile && !profCreateErr) {
+            // Sync to staff array if not already present
             if (!existingStaff && save && appData) {
-              const newStaffEntry = {
-                id: staffId, name: name.trim(), phone: phone.trim(),
-                role: "普通员工", isAdmin: false, permission: "editor",
-                color: existingStaff?.color || PIE_COLORS[Math.floor(Math.random() * PIE_COLORS.length)],
-              };
-              save({...appData, staff: [...(appData.staff||[]), newStaffEntry]});
+              try { save({...appData, staff: [...(appData.staff||[]), {id:staffId, name:name.trim(), phone:phone.trim(), role:"普通员工", isAdmin:false, permission:"editor", color:newProfile.color||PIE_COLORS[0]}]}); } catch(e) { console.warn("Staff sync failed:", e); }
             }
             onLogin(newProfile);
           } else {
@@ -3424,24 +3366,15 @@ function LoginScreen({onLogin, appData, save}) {
           await supabase.auth.signOut();
           setLoading(false); return;
         }
-        // If this is a brand-new person (not matched to existing staff), add them to data.staff
-        if (!existingStaff && save && appData) {
-          const newStaffEntry = {
-            id: staffId,
-            name: name.trim(),
-            phone: phone.trim(),
-            role: staffRole,
-            isAdmin: false,
-            permission: "editor",
-            color: staffColor,
-          };
-          save({...appData, staff: [...(appData.staff||[]), newStaffEntry]});
-        }
         clearTimeout(timeout);
         // Auto-login: fetch profile and log in directly
         const { data: profile } = await supabase.from("profiles").select("*").eq("id", authData.user.id).single();
         if (cancelled) return;
         if (profile) {
+          // Sync to staff array if not already present
+          if (!existingStaff && save && appData) {
+            try { save({...appData, staff: [...(appData.staff||[]), {id:staffId, name:name.trim(), phone:phone.trim(), role:staffRole, isAdmin:false, permission:"editor", color:staffColor}]}); } catch(e) { console.warn("Staff sync failed:", e); }
+          }
           onLogin(profile);
         } else {
           setSuccess("注册成功！请登录");
