@@ -962,8 +962,10 @@ ${staffSummary}
             .replace(/,\s*([}\]])/g, "$1");
           parsed = JSON.parse(fixed);
         } catch (e2) {
-          // If still fails, create a friendly message from the raw text
-          parsed = { message: raw.slice(0, 500), operations: [], needsMoreInfo: true, questions: ["请重新描述你的需求，我来帮你处理"] };
+          // If still fails, show as plain error — never set needsMoreInfo/questions here
+          setChatMessages([...updatedChat, {role:"assistant", content:"AI 返回的格式无法解析，请重试或换一种描述方式。", isError:true}]);
+          setLoading(false);
+          return;
         }
       }
 
