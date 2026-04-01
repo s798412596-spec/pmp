@@ -2930,7 +2930,37 @@ function StaffView({data,save,auditLog,user}){const{staff,projects}=data;const[e
     setAccountLoading(false);
   };
 
+  // Find profiles that registered but aren't in data.staff yet
+  const unsyncedProfiles = profiles.filter(p =>
+    !staff.some(s => s.phone === p.phone || s.id === p.staff_id)
+  );
+
+  const syncProfiles = () => {
+    if(unsyncedProfiles.length === 0) return;
+    const newEntries = unsyncedProfiles.map(p => ({
+      id: p.staff_id || uid(),
+      name: p.name || "未知",
+      phone: p.phone || "",
+      role: p.role || "普通员工",
+      isAdmin: p.is_admin || false,
+      permission: p.is_admin ? "admin" : "editor",
+      color: STAFF_COLORS[staff.length % STAFF_COLORS.length],
+    }));
+    save({...data, staff: [...staff, ...newEntries]});
+    if(auditLog && user) auditLog.addLog(user.id, user.name, "create", "人员", newEntries.map(e=>e.name).join("、"));
+  };
+
   return<div>
+    {unsyncedProfiles.length > 0 && (
+      <div style={{marginBottom:16,padding:"12px 16px",background:"#FFF8EC",borderRadius:T.radiusSm,border:`1px solid ${T.warning}40`,display:"flex",alignItems:"center",gap:12}}>
+        <AlertCircle size={16} color={T.warning} style={{flexShrink:0}}/>
+        <div style={{flex:1}}>
+          <div style={{fontSize:13,fontWeight:600,color:T.text1}}>发现 {unsyncedProfiles.length} 位已注册但未同步的成员</div>
+          <div style={{fontSize:11,color:T.text3,marginTop:2}}>{unsyncedProfiles.map(p=>p.name).join("、")}</div>
+        </div>
+        <Btn small onClick={syncProfiles}><UserPlus size={12}/> 一键同步</Btn>
+      </div>
+    )}
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22}}>
       <h2 style={{margin:0,fontSize:22,fontWeight:700,color:T.text1,display:"flex",alignItems:"center",gap:8}}><Users size={22}/> 人员管理</h2>
       <div style={{display:"flex",gap:8}}>
