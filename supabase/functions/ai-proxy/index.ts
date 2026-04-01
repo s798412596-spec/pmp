@@ -20,7 +20,18 @@ serve(async (req) => {
     if (!system || !messages) return new Response(JSON.stringify({ error: "Missing system or messages" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     const activeProvider = (provider || "gemini").toLowerCase();
     let responseText = "";
-    if (activeProvider === "anthropic") {
+    if (activeProvider === "glm") {
+      const apiKey = Deno.env.get("GLM_API_KEY");
+      if (!apiKey) throw new Error("GLM_API_KEY not set");
+      const resp = await fetch("https://open.bigmodel.cn/api/paas/v4/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
+        body: JSON.stringify({ model: model || "GLM-5.1", max_tokens: 8192, response_format: JSON_FORMAT, messages: [{ role: "system", content: system }, ...messages] })
+      });
+      if (!resp.ok) { const e = await resp.text(); throw new Error("GLM error " + resp.status + ": " + e); }
+      const r = await resp.json();
+      responseText = r.choices?.[0]?.message?.content || "";
+    } else if (activeProvider === "anthropic") {
       const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
       if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
       const resp = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" }, body: JSON.stringify({ model: model || "claude-sonnet-4-6-20260217", max_tokens: 8192, system, messages }) });
@@ -37,7 +48,6 @@ serve(async (req) => {
     } else if (activeProvider === "gemini") {
       const apiKey = Deno.env.get("GEMINI_API_KEY");
       if (!apiKey) throw new Error("GEMINI_API_KEY not set");
-      // Retry up to 3 attempts for Gemini (prone to empty responses under load)
       for (let attempt = 1; attempt <= 3; attempt++) {
         responseText = await callGemini(apiKey, model, system, messages);
         if (responseText) break;

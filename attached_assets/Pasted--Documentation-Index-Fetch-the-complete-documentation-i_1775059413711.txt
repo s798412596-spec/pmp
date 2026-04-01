@@ -1,0 +1,192 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.bigmodel.cn/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# 接入 GLM-5.1
+
+<Tip>
+  当前，GLM Coding Plan 已面向全量用户（Max & Pro & Lite）支持最新的 GLM-5.1 模型，可以在你常用的 Coding Agent 中切换使用。
+</Tip>
+
+## 在 Claude Code 中切换
+
+### Step 0 Claude Code 默认配置
+
+Claude Code 内部模型环境变量与 GLM 模型对应关系，默认配置如下：
+
+* `ANTHROPIC_DEFAULT_OPUS_MODEL`：`GLM-4.7`
+* `ANTHROPIC_DEFAULT_SONNET_MODEL`：`GLM-4.7`
+* `ANTHROPIC_DEFAULT_HAIKU_MODEL`：`GLM-4.5-Air`
+
+### Step 1 更改默认配置
+
+<Tabs>
+  <Tab title="Windows">
+    找到配置文件 `~/.claude/settings.json`，如下图所示：
+    ![Description](https://cdn.bigmodel.cn/markdown/1774605846629image.png?attname=image.png)
+  </Tab>
+
+  <Tab title="macOS">
+    * 方法一：控制台使用 `vim ~/.claude/settings.json` 打开并编辑文件，编辑后 ESC 输入 `:wq` 保存。
+    * 方法二：访达 → 前往文件夹 → 输入 `~/.claude/settings.json` 找到此配置文件编辑。
+
+    ![Description](https://cdn.bigmodel.cn/markdown/1774606073746image.png?attname=image.png)
+  </Tab>
+</Tabs>
+
+或者可以在Claude Code中询问：
+
+![Description](https://cdn.bigmodel.cn/markdown/1774606110492image.png?attname=image.png)
+
+使用 GLM-5.1，需要在配置文件 `settings.json` 中，添加或替换如下环境变量参数：
+
+```json  theme={null}
+  {
+    "env": {
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL": "GLM-4.5-air",
+      "ANTHROPIC_DEFAULT_SONNET_MODEL": "GLM-5.1",
+      "ANTHROPIC_DEFAULT_OPUS_MODEL": "GLM-5.1"
+    }
+  }
+```
+
+### Step 2 确认模型是否切换
+
+启动一个新的命令行窗口，运行 `claude` 启动 Claude Code，在 Claude Code 中输入 `/status` 确认模型状态：
+
+![Description](https://cdn.bigmodel.cn/markdown/1774606248371image.png?attname=image.png)
+
+## 在 OpenClaw 中切换
+
+> 对正在使用的 openclaw 无法通过选择 provider model 方式切换到 GLM-5.1 的用户 \
+> 在已经配置了上一步 Provider 接入后，可以参考下方配置切换到 GLM-5.1 新模型
+
+#### Step 1 更改默认配置
+
+找到配置文件 `~/.openclaw/openclaw.json`，如下图所示：
+
+![Description](https://cdn.bigmodel.cn/markdown/1774606346217image.png?attname=image.png)
+
+在 `~/.openclaw/openclaw.json` 文件中的 `models.providers.zai.models` 数组中添加 `GLM-5.1` 模型，在最后一个模型后面添加：注意 JSON 格式数组里面加逗号
+
+```json  theme={null}
+{
+  "id": "GLM-5.1",
+  "name": "GLM-5.1",
+  "reasoning": true,
+  "input": [
+    "text"
+  ],
+  "cost": {
+    "input": 0,
+    "output": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0
+  },
+  "contextWindow": 204800,
+  "maxTokens": 131072
+}
+```
+
+修改默认模型，找到 `agents.defaults.model.primary`
+
+```
+"primary": "zai/GLM-5",
+```
+
+修改为
+
+```
+"primary": "zai/GLM-5.1",
+```
+
+找到 agents.defaults.models（大约在第 71-76 行），添加：
+
+```
+"zai/GLM-5.1": {}
+```
+
+#### Step 2 修改后的配置
+
+**完整的修改后的文件片段参考如下:**
+
+1. `models.providers.zai.models` 部分：
+
+```
+"models": [
+  {
+    "id": "GLM-5",
+    "name": "GLM-5",
+    "reasoning": true,
+    "input": ["text"],
+    "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+    "contextWindow": 204800,
+    "maxTokens": 131072
+  },
+  {
+    "id": "GLM-4.7",
+    "name": "GLM-4.7",
+    "reasoning": true,
+    "input": ["text"],
+    "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+    "contextWindow": 204800,
+    "maxTokens": 131072
+  },
+  {
+    "id": "GLM-5.1",
+    "name": "GLM-5.1",
+    "reasoning": true,
+    "input": ["text"],
+    "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+    "contextWindow": 204800,
+    "maxTokens": 131072
+  }
+]
+```
+
+2. `agents.defaults.model.primary` 部分：
+
+```
+"model": {
+  "primary": "zai/GLM-5.1",
+  "fallbacks": ["zai/GLM-4.7"]
+}
+```
+
+3. agents.defaults.models 部分：
+
+```
+"models": {
+  "zai/GLM-5": {"alias": "GLM"},
+  "zai/GLM-4.7": {},
+  "zai/GLM-5.1": {}
+}
+```
+
+修改完成后重启网关：`openclaw gateway restart` , 这样就能直接使用 GLM-5.1 模型了！
+
+终端执行 `openclaw tui` 进入对话可以看到我们正在使用 GLM-5.1 模型。
+
+## 在其他工具中切换
+
+<Warning>
+  目前只能用于可以自定义模型的 Coding Agent，若使用的 Agent 工具不能设置自定义模型，需要等待官方后续配置
+</Warning>
+
+### 以 Cline 为例
+
+![Description](https://cdn.bigmodel.cn/markdown/177461592642611.jpeg?attname=11.jpeg)
+
+请按照以下配置填入相关信息：
+
+* **API Provider**：选择 `OpenAI Compatible`
+* **Base URL**：输入 `https://open.bigmodel.cn/api/coding/paas/v4`
+* **API Key**：填入您的智谱 API Key
+* **模型**：选择"使用自定义"，并输入模型名称（如：`GLM-5.1` ）
+* **其他配置**：
+  * 取消勾选 **Support Images**
+  * 调整 **Context Window Size** 为 `200000`
+  * 根据您的任务需求调整 `temperature` 等其它参数
+
+
+Built with [Mintlify](https://mintlify.com).
