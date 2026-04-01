@@ -1639,7 +1639,7 @@ function AdminApp({data,user,save,syncStatus,auditLog,taskInstancesHook,delivera
     </div>
     <main style={{flex:1,padding:"28px 36px",overflowY:"auto",maxHeight:"100vh"}}>
       {/* vData: data with hidden projects filtered out (for all views except ProjectsView) */}
-      {(()=>{const vData=showHidden?{...data,projects:(data.projects||[])}:{...data,projects:(data.projects||[]).filter(p=>!p.hidden)};return<ErrorBoundary key={view}><div style={{animation:"fadeIn 0.3s ease"}}>
+      {(()=>{try{const vData=showHidden?{...data,projects:(data.projects||[])}:{...data,projects:(data.projects||[]).filter(p=>!p.hidden)};return<ErrorBoundary key={view}><div style={{animation:"fadeIn 0.3s ease"}}>
         {view==="overview"&&<OverviewView data={vData} save={save} auditLog={auditLog} user={user}/>}
         {view==="projects"&&<ProjectsView data={data} save={save} auditLog={auditLog} user={user} showHidden={showHidden}/>}
         {view==="kanban"&&<KanbanView data={vData} save={save} auditLog={auditLog} user={user}/>}
@@ -1653,7 +1653,7 @@ function AdminApp({data,user,save,syncStatus,auditLog,taskInstancesHook,delivera
         {view==="deliverables"&&<DeliverablesView data={vData} user={user} deliverablesHook={deliverablesHook} auditLog={auditLog}/>}
         {view==="staff"&&<StaffView data={data} save={save} auditLog={auditLog} user={user}/>}
         {view==="audit"&&<AuditLogView auditLog={auditLog} staff={data.staff}/>}
-      </div></ErrorBoundary>;})()}
+      </div></ErrorBoundary>;}catch(e){return<div style={{padding:32,color:"#e53e3e",background:"#fff5f5",borderRadius:12,margin:24}}><b>渲染错误：</b>{e?.message}</div>;}})()}
     </main>
   </div>;
 }
