@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, Component } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid, Legend } from "recharts";
 import {
   Mountain, LayoutDashboard, Settings, ClipboardList, CalendarDays, BarChart3, Users,
@@ -224,6 +224,20 @@ const DEFAULT_PROJECTS = [
 ];
 
 const DEFAULT_DATA = {projects:DEFAULT_PROJECTS,staff:DEFAULT_STAFF,weekSchedules:{},calendarItems:[],assets:[],comments:[],notifications:[],subtasks:{},taskInstances:{},risks:[],globalSearch:""};
+
+class ErrorBoundary extends Component {
+  constructor(props){super(props);this.state={error:null};}
+  static getDerivedStateFromError(e){return{error:e};}
+  componentDidCatch(e,info){console.error("[ErrorBoundary]",e,info);}
+  render(){
+    if(this.state.error)return<div style={{padding:32,color:"#e53e3e",background:"#fff5f5",borderRadius:12,margin:24,fontFamily:"monospace"}}>
+      <b>页面渲染出错</b><br/><br/>
+      <span style={{fontSize:13}}>{this.state.error?.message}</span><br/><br/>
+      <button onClick={()=>this.setState({error:null})} style={{background:"#e53e3e",color:"#fff",border:"none",padding:"6px 16px",borderRadius:6,cursor:"pointer"}}>重试</button>
+    </div>;
+    return this.props.children;
+  }
+}
 
 function getAllActions(projects){const a=[];projects.forEach(p=>(p.categories||[]).forEach(c=>(c.resources||[]).forEach(r=>(r.actions||[]).forEach(act=>{a.push({...act,dependsOn:act.dependsOn||[],attachments:act.attachments||[],projectId:p.id,projectName:p.name,projectColor:p.color,isKey:p.isKey,priority:p.priority,catName:c.name,cat:c.cat,resName:r.name,resType:r.type,catId:c.id,resId:r.id});}))));return a;}
 function updateActionInProjects(projects,actionId,updates){return projects.map(p=>({...p,categories:(p.categories||[]).map(c=>({...c,resources:(c.resources||[]).map(r=>({...r,actions:(r.actions||[]).map(a=>a.id===actionId?{...a,...updates}:a)}))}))}));}
@@ -1625,7 +1639,7 @@ function AdminApp({data,user,save,syncStatus,auditLog,taskInstancesHook,delivera
     </div>
     <main style={{flex:1,padding:"28px 36px",overflowY:"auto",maxHeight:"100vh"}}>
       {/* vData: data with hidden projects filtered out (for all views except ProjectsView) */}
-      {(()=>{const vData=showHidden?data:{...data,projects:(data.projects||[]).filter(p=>!p.hidden)};return<div style={{animation:"fadeIn 0.3s ease"}}>
+      {(()=>{const vData=showHidden?data:{...data,projects:(data.projects||[]).filter(p=>!p.hidden)};return<ErrorBoundary key={view}><div style={{animation:"fadeIn 0.3s ease"}}>
         {view==="overview"&&<OverviewView data={vData} save={save} auditLog={auditLog} user={user}/>}
         {view==="projects"&&<ProjectsView data={data} save={save} auditLog={auditLog} user={user} showHidden={showHidden}/>}
         {view==="kanban"&&<KanbanView data={vData} save={save} auditLog={auditLog} user={user}/>}
@@ -1639,7 +1653,7 @@ function AdminApp({data,user,save,syncStatus,auditLog,taskInstancesHook,delivera
         {view==="deliverables"&&<DeliverablesView data={vData} user={user} deliverablesHook={deliverablesHook} auditLog={auditLog}/>}
         {view==="staff"&&<StaffView data={data} save={save} auditLog={auditLog} user={user}/>}
         {view==="audit"&&<AuditLogView auditLog={auditLog} staff={data.staff}/>}
-      </div>;})()}
+      </div></ErrorBoundary>;})()}
     </main>
   </div>;
 }
