@@ -954,6 +954,7 @@ ${staffSummary}
       const result = await resp.json();
       if (result.error) throw new Error(result.error);
       const raw = result.text || "";
+      console.log("AI_RAW:", JSON.stringify(raw).slice(0,800));
       // Clean up common AI response issues
       let cleaned = raw.replace(/```json\s*/g,"").replace(/```\s*/g,"").trim();
       // Fix single quotes → double quotes (common Gemini issue)
