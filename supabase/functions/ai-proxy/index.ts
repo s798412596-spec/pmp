@@ -1,6 +1,18 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 const corsHeaders = {"Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type","Access-Control-Allow-Methods":"POST, OPTIONS"};
 const JSON_FORMAT = { type: "json_object" };
+
+async function callGemini(apiKey: string, model: string, system: string, messages: any[]): Promise<string> {
+  const resp = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
+    body: JSON.stringify({ model: model || "gemini-3.1-pro-preview", max_tokens: 8192, messages: [{ role: "system", content: system }, ...messages] })
+  });
+  if (!resp.ok) { const e = await resp.text(); throw new Error("Gemini error " + resp.status + ": " + e); }
+  const r = await resp.json();
+  return r.choices?.[0]?.message?.content || "";
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
@@ -25,11 +37,13 @@ serve(async (req) => {
     } else if (activeProvider === "gemini") {
       const apiKey = Deno.env.get("GEMINI_API_KEY");
       if (!apiKey) throw new Error("GEMINI_API_KEY not set");
-      const resp = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey }, body: JSON.stringify({ model: model || "gemini-3.1-pro-preview", max_tokens: 8192, messages: [{ role: "system", content: system }, ...messages] }) });
-      if (!resp.ok) { const e = await resp.text(); throw new Error("Gemini error " + resp.status + ": " + e); }
-      const r = await resp.json();
-      responseText = r.choices?.[0]?.message?.content || "";
-      if (!responseText) throw new Error("Gemini returned empty response. The input may be too long or the model refused to respond.");
+      // Retry up to 3 attempts for Gemini (prone to empty responses under load)
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        responseText = await callGemini(apiKey, model, system, messages);
+        if (responseText) break;
+        if (attempt < 3) await new Promise(r => setTimeout(r, 1000 * attempt));
+      }
+      if (!responseText) throw new Error("Gemini 连续返回空响应（已重试3次），请稍后再试或切换其他模型。");
     } else if (activeProvider === "deepseek") {
       const apiKey = Deno.env.get("DEEPSEEK_API_KEY");
       if (!apiKey) throw new Error("DEEPSEEK_API_KEY not set");
