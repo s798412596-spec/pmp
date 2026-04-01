@@ -108,7 +108,6 @@ serve(async (req) => {
             system_instruction: { parts: [{ text: system }] },
             contents: geminiContents,
             generationConfig: {
-              responseMimeType: "application/json",
               maxOutputTokens: 4096,
             },
           }),
@@ -121,7 +120,15 @@ serve(async (req) => {
       }
 
       const result = await resp.json();
-      responseText = result.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      const candidate = result.candidates?.[0];
+      if (!candidate) {
+        const blockReason = result.promptFeedback?.blockReason || "unknown";
+        throw new Error(`Gemini returned no candidates. Block reason: ${blockReason}`);
+      }
+      if (candidate.finishReason && candidate.finishReason !== "STOP" && candidate.finishReason !== "MAX_TOKENS") {
+        throw new Error(`Gemini finishReason: ${candidate.finishReason}`);
+      }
+      responseText = candidate.content?.parts?.[0]?.text || "";
     }
 
     // ─── DeepSeek ────────────────────────
