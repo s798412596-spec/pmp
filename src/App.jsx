@@ -899,16 +899,11 @@ ${staffSummary}
         content: m.role === "assistant" ? (m.rawContent || m.content) : m.content
       }));
 
-      // Use the current user's session JWT for auth (reject if no session)
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) throw new Error("请先登录后再使用AI助手");
-      const authToken = session.access_token;
-
       const resp = await fetch(EDGE_FN_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${authToken}`,
+          "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
         },
         body: JSON.stringify({ provider, model, system: buildSystemPrompt(), messages: apiMessages })
       });
