@@ -945,6 +945,7 @@ ${staffSummary}
       const result = await resp.json();
       if (result.error) throw new Error(result.error);
       const raw = result.text || "";
+      if (!raw.trim()) throw new Error("AI 返回了空响应，可能是输入内容过长，请缩短后重试。");
       // Clean up common AI response issues
       let cleaned = raw.replace(/```json\s*/g,"").replace(/```\s*/g,"").trim();
       // Fix single quotes → double quotes (common Gemini issue)

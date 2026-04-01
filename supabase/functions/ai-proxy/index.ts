@@ -11,28 +11,29 @@ serve(async (req) => {
     if (activeProvider === "anthropic") {
       const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
       if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
-      const resp = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" }, body: JSON.stringify({ model: model || "claude-sonnet-4-6-20260217", max_tokens: 4096, system, messages }) });
+      const resp = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" }, body: JSON.stringify({ model: model || "claude-sonnet-4-6-20260217", max_tokens: 8192, system, messages }) });
       if (!resp.ok) { const e = await resp.text(); throw new Error("Anthropic error " + resp.status + ": " + e); }
       const r = await resp.json();
       responseText = r.content?.map((c: any) => c.text || "").join("") || "";
     } else if (activeProvider === "openai") {
       const apiKey = Deno.env.get("OPENAI_API_KEY");
       if (!apiKey) throw new Error("OPENAI_API_KEY not set");
-      const resp = await fetch("https://api.openai.com/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey }, body: JSON.stringify({ model: model || "gpt-5.4", max_tokens: 4096, response_format: JSON_FORMAT, messages: [{ role: "system", content: system }, ...messages] }) });
+      const resp = await fetch("https://api.openai.com/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey }, body: JSON.stringify({ model: model || "gpt-5.4", max_tokens: 8192, response_format: JSON_FORMAT, messages: [{ role: "system", content: system }, ...messages] }) });
       if (!resp.ok) { const e = await resp.text(); throw new Error("OpenAI error " + resp.status + ": " + e); }
       const r = await resp.json();
       responseText = r.choices?.[0]?.message?.content || "";
     } else if (activeProvider === "gemini") {
       const apiKey = Deno.env.get("GEMINI_API_KEY");
       if (!apiKey) throw new Error("GEMINI_API_KEY not set");
-      const resp = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey }, body: JSON.stringify({ model: model || "gemini-3.1-pro-preview", max_tokens: 4096, response_format: JSON_FORMAT, messages: [{ role: "system", content: system }, ...messages] }) });
+      const resp = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey }, body: JSON.stringify({ model: model || "gemini-3.1-pro-preview", max_tokens: 8192, messages: [{ role: "system", content: system }, ...messages] }) });
       if (!resp.ok) { const e = await resp.text(); throw new Error("Gemini error " + resp.status + ": " + e); }
       const r = await resp.json();
       responseText = r.choices?.[0]?.message?.content || "";
+      if (!responseText) throw new Error("Gemini returned empty response. The input may be too long or the model refused to respond.");
     } else if (activeProvider === "deepseek") {
       const apiKey = Deno.env.get("DEEPSEEK_API_KEY");
       if (!apiKey) throw new Error("DEEPSEEK_API_KEY not set");
-      const resp = await fetch("https://api.deepseek.com/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey }, body: JSON.stringify({ model: model || "deepseek-v3.2", max_tokens: 4096, response_format: JSON_FORMAT, messages: [{ role: "system", content: system }, ...messages] }) });
+      const resp = await fetch("https://api.deepseek.com/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey }, body: JSON.stringify({ model: model || "deepseek-v3.2", max_tokens: 8192, response_format: JSON_FORMAT, messages: [{ role: "system", content: system }, ...messages] }) });
       if (!resp.ok) { const e = await resp.text(); throw new Error("DeepSeek error " + resp.status + ": " + e); }
       const r = await resp.json();
       responseText = r.choices?.[0]?.message?.content || "";
@@ -40,7 +41,7 @@ serve(async (req) => {
       const apiKey = Deno.env.get("CUSTOM_LLM_API_KEY");
       const baseUrl = Deno.env.get("CUSTOM_LLM_BASE_URL");
       if (!apiKey || !baseUrl) throw new Error("CUSTOM_LLM_API_KEY or CUSTOM_LLM_BASE_URL not set");
-      const resp = await fetch(baseUrl + "/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey }, body: JSON.stringify({ model: model || "default", max_tokens: 4096, response_format: JSON_FORMAT, messages: [{ role: "system", content: system }, ...messages] }) });
+      const resp = await fetch(baseUrl + "/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey }, body: JSON.stringify({ model: model || "default", max_tokens: 8192, response_format: JSON_FORMAT, messages: [{ role: "system", content: system }, ...messages] }) });
       if (!resp.ok) { const e = await resp.text(); throw new Error("Custom LLM error " + resp.status + ": " + e); }
       const r = await resp.json();
       responseText = r.choices?.[0]?.message?.content || "";
