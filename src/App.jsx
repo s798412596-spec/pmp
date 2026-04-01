@@ -3242,7 +3242,7 @@ function DeliverablesView({data,user,deliverablesHook,auditLog}) {
 
 // ─── LOGIN + REGISTER + ROUTER ────────────
 // ═══════════════════════════════════════════
-function LoginScreen({onLogin, appData}) {
+function LoginScreen({onLogin, appData, save}) {
   const [mode, setMode] = useState("login"); // "login" | "register"
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
@@ -3353,6 +3353,14 @@ function LoginScreen({onLogin, appData}) {
           if (cancelled) return;
           clearTimeout(timeout);
           if (newProfile && !profCreateErr) {
+            if (!existingStaff && save && appData) {
+              const newStaffEntry = {
+                id: staffId, name: name.trim(), phone: phone.trim(),
+                role: "普通员工", isAdmin: false, permission: "editor",
+                color: existingStaff?.color || PIE_COLORS[Math.floor(Math.random() * PIE_COLORS.length)],
+              };
+              save({...appData, staff: [...(appData.staff||[]), newStaffEntry]});
+            }
             onLogin(newProfile);
           } else {
             setErr("用户资料创建失败，请联系管理员");
@@ -3385,6 +3393,19 @@ function LoginScreen({onLogin, appData}) {
           setErr("注册失败：无法创建用户资料，请联系管理员");
           await supabase.auth.signOut();
           setLoading(false); return;
+        }
+        // If this is a brand-new person (not matched to existing staff), add them to data.staff
+        if (!existingStaff && save && appData) {
+          const newStaffEntry = {
+            id: staffId,
+            name: name.trim(),
+            phone: phone.trim(),
+            role: staffRole,
+            isAdmin: false,
+            permission: "editor",
+            color: staffColor,
+          };
+          save({...appData, staff: [...(appData.staff||[]), newStaffEntry]});
         }
         clearTimeout(timeout);
         // Auto-login: fetch profile and log in directly
@@ -3541,7 +3562,7 @@ export default function App() {
     </div>
   </div>;
 
-  if (!user) return <LoginScreen onLogin={onLogin} appData={data}/>;
+  if (!user) return <LoginScreen onLogin={onLogin} appData={data} save={save}/>;
 
   const viewData = user.is_admin ? data : filteredData;
 
