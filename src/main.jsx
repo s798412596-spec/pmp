@@ -1,24 +1,34 @@
-import React, { Component } from 'react';
+import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App.jsx';
 
-class RootErrorBoundary extends Component {
-  constructor(props) { super(props); this.state = { error: null }; }
-  static getDerivedStateFromError(e) { return { error: e }; }
-  componentDidCatch(e, info) { console.error('[RootError]', e, info); }
+// Mock window.storage API using localStorage
+window.storage = {
+  get: (key) => Promise.resolve({ value: localStorage.getItem(key) }),
+  set: (key, value) => { localStorage.setItem(key, value); return Promise.resolve(); }
+};
+
+class RootErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  componentDidCatch(error, info) { console.error("RootErrorBoundary caught:", error, info); }
   render() {
-    if (this.state.error) return (
-      <div style={{ padding: 40, fontFamily: 'monospace', color: '#e53e3e', background: '#fff5f5', minHeight: '100vh' }}>
-        <h2>应用崩溃</h2>
-        <p><b>错误信息：</b>{this.state.error?.message}</p>
-        <p><b>位置：</b>{this.state.error?.stack?.split('\n')[1]}</p>
-        <button onClick={() => this.setState({ error: null })} style={{ background: '#e53e3e', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: 6, cursor: 'pointer', marginTop: 16 }}>重试</button>
-      </div>
-    );
+    if (this.state.hasError) {
+      return React.createElement("div", { style: { padding: 40, fontFamily: "-apple-system, sans-serif", textAlign: "center" } },
+        React.createElement("h2", { style: { color: "#EF4444" } }, "页面出错了"),
+        React.createElement("p", { style: { color: "#6B7280", fontSize: 14 } }, String(this.state.error?.message || "未知错误")),
+        React.createElement("button", {
+          onClick: () => { this.setState({ hasError: false, error: null }); window.location.reload(); },
+          style: { marginTop: 16, padding: "10px 24px", borderRadius: 8, border: "none", background: "#3B82F6", color: "#fff", fontSize: 14, cursor: "pointer" }
+        }, "刷新重试")
+      );
+    }
     return this.props.children;
   }
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <RootErrorBoundary><App /></RootErrorBoundary>
+  <RootErrorBoundary>
+    <App />
+  </RootErrorBoundary>
 );

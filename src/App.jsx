@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef, Component } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid, Legend } from "recharts";
 import {
   Mountain, LayoutDashboard, Settings, ClipboardList, CalendarDays, BarChart3, Users,
@@ -12,6 +12,27 @@ import {
   ArrowUpFromLine, FolderOpen, Image, FileVideo, FileAudio, File, EyeOff
 } from "lucide-react";
 import { supabase, TABLE } from "./supabase.js";
+import React from "react";
+
+// ─── Error Boundary for view sections ─────
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  componentDidCatch(error, info) { console.error("ErrorBoundary caught:", error, info); }
+  render() {
+    if (this.state.hasError) {
+      return React.createElement("div", { style: { padding: 40, textAlign: "center", color: "#6B7280" } },
+        React.createElement("div", { style: { fontSize: 16, fontWeight: 700, color: "#EF4444", marginBottom: 8 } }, "该模块加载出错"),
+        React.createElement("div", { style: { fontSize: 12, marginBottom: 16 } }, String(this.state.error?.message || "")),
+        React.createElement("button", {
+          onClick: () => this.setState({ hasError: false, error: null }),
+          style: { padding: "8px 20px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer", fontSize: 13 }
+        }, "重试")
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // ─── Design Tokens (Apple-style) ──────────
 const T = {
@@ -225,20 +246,6 @@ const DEFAULT_PROJECTS = [
 
 const DEFAULT_DATA = {projects:DEFAULT_PROJECTS,staff:DEFAULT_STAFF,weekSchedules:{},calendarItems:[],assets:[],comments:[],notifications:[],subtasks:{},taskInstances:{},risks:[],globalSearch:""};
 
-class ErrorBoundary extends Component {
-  constructor(props){super(props);this.state={error:null};}
-  static getDerivedStateFromError(e){return{error:e};}
-  componentDidCatch(e,info){console.error("[ErrorBoundary]",e,info);}
-  render(){
-    if(this.state.error)return<div style={{padding:32,color:"#e53e3e",background:"#fff5f5",borderRadius:12,margin:24,fontFamily:"monospace"}}>
-      <b>页面渲染出错</b><br/><br/>
-      <span style={{fontSize:13}}>{this.state.error?.message}</span><br/><br/>
-      <button onClick={()=>this.setState({error:null})} style={{background:"#e53e3e",color:"#fff",border:"none",padding:"6px 16px",borderRadius:6,cursor:"pointer"}}>重试</button>
-    </div>;
-    return this.props.children;
-  }
-}
-
 function getAllActions(projects){const a=[];projects.forEach(p=>(p.categories||[]).forEach(c=>(c.resources||[]).forEach(r=>(r.actions||[]).forEach(act=>{a.push({...act,dependsOn:act.dependsOn||[],attachments:act.attachments||[],projectId:p.id,projectName:p.name,projectColor:p.color,isKey:p.isKey,priority:p.priority,catName:c.name,cat:c.cat,resName:r.name,resType:r.type,catId:c.id,resId:r.id});}))));return a;}
 function updateActionInProjects(projects,actionId,updates){return projects.map(p=>({...p,categories:(p.categories||[]).map(c=>({...c,resources:(c.resources||[]).map(r=>({...r,actions:(r.actions||[]).map(a=>a.id===actionId?{...a,...updates}:a)}))}))}));}
 
@@ -264,7 +271,7 @@ function useStorage() {
       setSyncStatus("error");
       setLoading(false);
     };
-    // Timeout: if Supabase doesn't respond in 5s, fall back to localStorage
+    // Timeout: if Supabase doesn't respond in 10s, fall back to localStorage
     const loadTimeout = setTimeout(fallbackToLocal, 10000);
     (async () => {
       try {
@@ -305,21 +312,21 @@ function useStorage() {
   useEffect(() => {
     const channel = supabase.channel('app-data-changes')
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: TABLE, filter: 'id=eq.main' }, (payload) => {
-        if (!payload.new?.data) return;
-        const remote = { ...DEFAULT_DATA, ...payload.new.data };
-        // 时间戳冲突保护：只有远端数据比本地数据更新时才覆盖
-        setData(local => {
-          if (!local) return remote;
-          const localTs = local._savedAt || 0;
-          const remoteTs = remote._savedAt || 0;
-          if (remoteTs <= localTs) {
-            console.log("Realtime: remote data is older, keeping local");
-            return local;
-          }
-          localStorage.setItem(SK, JSON.stringify(remote));
-          setSyncStatus("synced");
-          return remote;
-        });
+        if (payload.new?.data) {
+          const remote = { ...DEFAULT_DATA, ...payload.new.data };
+          // Conflict protection: only apply remote if it's newer than local
+          setData(prev => {
+            const localTs = prev?._savedAt || 0;
+            const remoteTs = remote._savedAt || 0;
+            if (remoteTs > localTs) {
+              localStorage.setItem(SK, JSON.stringify(remote));
+              setSyncStatus("synced");
+              return remote;
+            }
+            // Local is newer, keep it
+            return prev;
+          });
+        }
       })
       .subscribe();
     channelRef.current = channel;
@@ -327,12 +334,12 @@ function useStorage() {
   }, []);
 
   const save = useCallback(async (d) => {
-    const dataWithTs = { ...d, _savedAt: Date.now() };
-    setData(dataWithTs);
-    localStorage.setItem(SK, JSON.stringify(dataWithTs));
+    const withTs = { ...d, _savedAt: Date.now() };
+    setData(withTs);
+    localStorage.setItem(SK, JSON.stringify(withTs));
     setSyncStatus("syncing");
     try {
-      await supabase.from(TABLE).upsert({ id: "main", data: dataWithTs, updated_at: new Date().toISOString() });
+      await supabase.from(TABLE).upsert({ id: "main", data: withTs, updated_at: new Date().toISOString() });
       setSyncStatus("synced");
     } catch (e) {
       console.warn("Supabase save failed:", e);
@@ -884,8 +891,33 @@ ${staffSummary}
       const result = await resp.json();
       if (result.error) throw new Error(result.error);
       const raw = result.text || "";
-      const cleaned = raw.replace(/```json\s*/g,"").replace(/```\s*/g,"").trim();
-      const parsed = JSON.parse(cleaned);
+      // Clean up common AI response issues
+      let cleaned = raw.replace(/```json\s*/g,"").replace(/```\s*/g,"").trim();
+      // Fix single quotes → double quotes (common Gemini issue)
+      // Remove trailing commas before } or ]
+      cleaned = cleaned.replace(/,\s*([}\]])/g, "$1");
+      // Remove JS-style comments
+      cleaned = cleaned.replace(/\/\/[^\n]*/g, "");
+      // Try to extract JSON object if surrounded by extra text
+      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+      if (jsonMatch) cleaned = jsonMatch[0];
+      let parsed;
+      try {
+        parsed = JSON.parse(cleaned);
+      } catch (jsonErr) {
+        // Last resort: try fixing common issues
+        try {
+          // Replace single-quoted keys/values with double quotes
+          const fixed = cleaned
+            .replace(/'/g, '"')
+            .replace(/([{,]\s*)(\w+)\s*:/g, '$1"$2":')  // unquoted keys
+            .replace(/,\s*([}\]])/g, "$1");
+          parsed = JSON.parse(fixed);
+        } catch (e2) {
+          // If still fails, create a friendly message from the raw text
+          parsed = { message: raw.slice(0, 500), operations: [], needsMoreInfo: true, questions: ["请重新描述你的需求，我来帮你处理"] };
+        }
+      }
 
       const assistantMsg = {
         role: "assistant",
@@ -1627,7 +1659,7 @@ function AdminApp({data,user,save,syncStatus,auditLog,taskInstancesHook,delivera
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <div style={{width:34,height:34,borderRadius:9,background:T.accent,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff"}}><Mountain size={18}/></div>
           <div style={{flex:1}}><div style={{fontSize:15,fontWeight:700,color:T.text1}}>第二座山</div><div style={{fontSize:10,color:T.text3}}>管理后台</div></div>
-          <button onClick={()=>setShowHidden(h=>!h)} title="" style={{background:"none",border:"none",cursor:"pointer",padding:4,color:showHidden?T.accent:T.border,transition:T.transition,opacity:showHidden?0.9:0.3,display:"flex",alignItems:"center"}} onMouseEnter={e=>e.currentTarget.style.opacity=0.7} onMouseLeave={e=>e.currentTarget.style.opacity=showHidden?0.9:0.3}><Eye size={14}/></button>
+          <button onClick={()=>setShowHidden(h=>!h)} style={{background:"none",border:"none",cursor:"pointer",padding:6,borderRadius:6,color:showHidden?T.accent:T.text3,transition:T.transition,display:"flex",alignItems:"center",opacity:showHidden?1:0.45}} onMouseEnter={e=>{e.currentTarget.style.opacity=1;e.currentTarget.style.background=T.borderLight;}} onMouseLeave={e=>{e.currentTarget.style.opacity=showHidden?1:0.45;e.currentTarget.style.background="none";}}>{showHidden?<Eye size={15}/>:<EyeOff size={15}/>}</button>
         </div>
       </div>
       <GlobalSearchBar data={data} onNavigate={handleSearchNav}/>
@@ -1649,7 +1681,7 @@ function AdminApp({data,user,save,syncStatus,auditLog,taskInstancesHook,delivera
     </div>
     <main style={{flex:1,padding:"28px 36px",overflowY:"auto",maxHeight:"100vh"}}>
       {/* vData: data with hidden projects filtered out (for all views except ProjectsView) */}
-      {(()=>{try{const vData=showHidden?{...data,projects:(data.projects||[])}:{...data,projects:(data.projects||[]).filter(p=>!p.hidden)};return<ErrorBoundary key={view}><div style={{animation:"fadeIn 0.3s ease"}}>
+      {(()=>{try{const vData=showHidden?data:{...data,projects:(data.projects||[]).filter(p=>!p.hidden)};return<ErrorBoundary key={view}><div style={{animation:"fadeIn 0.3s ease"}}>
         {view==="overview"&&<OverviewView data={vData} save={save} auditLog={auditLog} user={user}/>}
         {view==="projects"&&<ProjectsView data={data} save={save} auditLog={auditLog} user={user} showHidden={showHidden}/>}
         {view==="kanban"&&<KanbanView data={vData} save={save} auditLog={auditLog} user={user}/>}
@@ -1663,7 +1695,7 @@ function AdminApp({data,user,save,syncStatus,auditLog,taskInstancesHook,delivera
         {view==="deliverables"&&<DeliverablesView data={vData} user={user} deliverablesHook={deliverablesHook} auditLog={auditLog}/>}
         {view==="staff"&&<StaffView data={data} save={save} auditLog={auditLog} user={user}/>}
         {view==="audit"&&<AuditLogView auditLog={auditLog} staff={data.staff}/>}
-      </div></ErrorBoundary>;}catch(e){return<div style={{padding:32,color:"#e53e3e",background:"#fff5f5",borderRadius:12,margin:24}}><b>渲染错误：</b>{e?.message}</div>;}})()}
+      </div></ErrorBoundary>;}catch(e){return<div style={{padding:40,textAlign:"center",color:"#EF4444"}}>渲染出错: {e.message}</div>;}})()}
     </main>
   </div>;
 }
