@@ -102,6 +102,7 @@ serve(async (req) => {
         body: JSON.stringify({
           model: model || "gemini-3.1-pro-preview",
           max_tokens: 4096,
+          response_format: { type: "json_object" },
           messages: [{ role: "system", content: system }, ...messages],
         }),
       });
