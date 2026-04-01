@@ -305,12 +305,21 @@ function useStorage() {
   useEffect(() => {
     const channel = supabase.channel('app-data-changes')
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: TABLE, filter: 'id=eq.main' }, (payload) => {
-        if (payload.new?.data) {
-          const remote = { ...DEFAULT_DATA, ...payload.new.data };
-          setData(remote);
+        if (!payload.new?.data) return;
+        const remote = { ...DEFAULT_DATA, ...payload.new.data };
+        // 时间戳冲突保护：只有远端数据比本地数据更新时才覆盖
+        setData(local => {
+          if (!local) return remote;
+          const localTs = local._savedAt || 0;
+          const remoteTs = remote._savedAt || 0;
+          if (remoteTs <= localTs) {
+            console.log("Realtime: remote data is older, keeping local");
+            return local;
+          }
           localStorage.setItem(SK, JSON.stringify(remote));
           setSyncStatus("synced");
-        }
+          return remote;
+        });
       })
       .subscribe();
     channelRef.current = channel;
@@ -318,11 +327,12 @@ function useStorage() {
   }, []);
 
   const save = useCallback(async (d) => {
-    setData(d);
-    localStorage.setItem(SK, JSON.stringify(d));
+    const dataWithTs = { ...d, _savedAt: Date.now() };
+    setData(dataWithTs);
+    localStorage.setItem(SK, JSON.stringify(dataWithTs));
     setSyncStatus("syncing");
     try {
-      await supabase.from(TABLE).upsert({ id: "main", data: d, updated_at: new Date().toISOString() });
+      await supabase.from(TABLE).upsert({ id: "main", data: dataWithTs, updated_at: new Date().toISOString() });
       setSyncStatus("synced");
     } catch (e) {
       console.warn("Supabase save failed:", e);
