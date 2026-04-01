@@ -702,10 +702,10 @@ function DeadlineAlerts({ actions, staff }) {
 // ─── AI CONFIG PANEL ─────────────────────
 // ═══════════════════════════════════════════
 const AI_PROVIDERS = [
-  { v: "gemini", l: "Google Gemini", models: ["gemini-2.5-pro", "gemini-2.0-flash", "gemini-2.0-flash-lite"] },
-  { v: "anthropic", l: "Anthropic Claude", models: ["claude-3-7-sonnet-20250219", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"] },
-  { v: "openai", l: "OpenAI", models: ["gpt-4o", "gpt-4o-mini", "o3-mini"] },
-  { v: "deepseek", l: "DeepSeek", models: ["deepseek-chat", "deepseek-reasoner"] },
+  { v: "gemini", l: "Google Gemini", models: ["gemini-3.1-pro-preview"] },
+  { v: "anthropic", l: "Anthropic Claude", models: ["claude-sonnet-4-6-20260217", "claude-opus-4-6-20260205", "claude-haiku-4-5-20251015"] },
+  { v: "openai", l: "OpenAI", models: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.3-instant"] },
+  { v: "deepseek", l: "DeepSeek", models: ["deepseek-v3.2", "deepseek-r1", "deepseek-v3"] },
   { v: "custom", l: "自定义 (OpenAI兼容)", models: [] },
 ];
 

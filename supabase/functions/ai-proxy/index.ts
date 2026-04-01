@@ -44,7 +44,7 @@ serve(async (req) => {
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: model || "claude-3-7-sonnet-20250219",
+          model: model || "claude-sonnet-4-6-20260217",
           max_tokens: 4096,
           system,
           messages,
@@ -72,7 +72,7 @@ serve(async (req) => {
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: model || "gpt-4o",
+          model: model || "gpt-5.4",
           max_tokens: 4096,
           messages: [{ role: "system", content: system }, ...messages],
         }),
@@ -100,7 +100,7 @@ serve(async (req) => {
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: model || "gemini-2.5-pro",
+          model: model || "gemini-3.1-pro-preview",
           max_tokens: 4096,
           messages: [{ role: "system", content: system }, ...messages],
         }),
@@ -127,7 +127,7 @@ serve(async (req) => {
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: model || "deepseek-chat",
+          model: model || "deepseek-v3.2",
           max_tokens: 4096,
           messages: [{ role: "system", content: system }, ...messages],
         }),
