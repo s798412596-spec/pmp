@@ -9,7 +9,7 @@ import {
   ShieldAlert, History, CalendarCheck, Filter, Download, TriangleAlert, LogOut,
   GitBranch, Milestone, GanttChartSquare, AlertOctagon, Link2, Paperclip, Eye,
   Lock, UserPlus, KeyRound, ShieldCheck, Upload, FolderArchive, FileCheck, FileX, FileClock,
-  ArrowUpFromLine, FolderOpen, Image, FileVideo, FileAudio, File, EyeOff
+  ArrowUpFromLine, FolderOpen, Image, FileVideo, FileAudio, File, EyeOff, Menu
 } from "lucide-react";
 import { supabase, TABLE } from "./supabase.js";
 import React from "react";
@@ -64,7 +64,7 @@ const T = {
 const CAT_COLORS = {"新媒体": T.accent, "OTA": T.teal, "外卖": T.warning, "私域": T.purple, "直播": T.pink, "活动": T.success};
 const PIE_COLORS = [T.accent, T.teal, T.warning, T.purple, T.pink, T.success, "#5856D6", "#64D2FF"];
 const SK = "sm-ops-v6";
-const uid = () => Math.random().toString(36).slice(2, 10);
+const uid = () => crypto.randomUUID().replace(/-/g,"").slice(0, 12);
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const PLATFORMS = ["抖音","小红书","微信公众号","微信视频号","大众点评","美团","快手","微博"];
 const CONTENT_TYPES = ["短视频","图文","直播","活动推广","促销海报","用户互动","探店合作","日常运营"];
@@ -81,6 +81,18 @@ const MILESTONE_STATUS = [{v:0,l:"未开始",c:T.text3},{v:1,l:"进行中",c:T.w
 const StatusIcon = ({v, size=14}) => v===0 ? <Circle size={size} strokeWidth={2}/> : v===1 ? <CircleDot size={size} strokeWidth={2}/> : <CheckCircle2 size={size} strokeWidth={2}/>;
 
 const RES_ICONS = {account: Smartphone, store: Store, channel: MessageCircle, live: Radio, other: Pin};
+
+// ─── Mobile Detection Hook ──────────────
+const MOBILE_BP = 768;
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth <= MOBILE_BP);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth <= MOBILE_BP);
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, []);
+  return isMobile;
+}
 
 // ─── Deadline Helpers ──────────────────────
 const WARN_DAYS = 3; // yellow warning threshold
@@ -628,8 +640,15 @@ const GlobalStyles = () => <style>{`
   ::-webkit-scrollbar-track { background:transparent; }
   ::-webkit-scrollbar-thumb { background:${T.border}; border-radius:3px; }
   @media (max-width: 768px) {
-    nav { display: none !important; }
-    main { padding: 16px !important; }
+    .mobile-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.3); z-index:99; }
+    .mobile-sidebar { position:fixed !important; left:0; top:0; z-index:100; height:100vh !important; box-shadow:4px 0 24px rgba(0,0,0,0.12); }
+    .mobile-sidebar-hidden { transform:translateX(-100%); }
+    .mobile-sidebar-visible { transform:translateX(0); }
+    .grid-responsive-5 { grid-template-columns: repeat(2, 1fr) !important; }
+    .grid-responsive-3 { grid-template-columns: 1fr !important; }
+    .grid-responsive-2 { grid-template-columns: 1fr !important; }
+    main { -webkit-overflow-scrolling: touch; }
+    h2 { font-size: 18px !important; }
   }
 `}</style>;
 
@@ -872,7 +891,7 @@ ${staffSummary}
       const aiConfig = JSON.parse(localStorage.getItem("sm-ai-config") || '{}');
       const provider = aiConfig.provider || "gemini";
       const model = aiConfig.model || "";
-      const EDGE_FN_URL = `${import.meta.env.VITE_SUPABASE_URL || 'https://divinifsucffsxyiyypc.supabase.co'}/functions/v1/ai-proxy`;
+      const EDGE_FN_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-proxy`;
 
       // Build messages array for multi-turn
       const apiMessages = updatedChat.map(m => ({
@@ -880,11 +899,16 @@ ${staffSummary}
         content: m.role === "assistant" ? (m.rawContent || m.content) : m.content
       }));
 
+      // Use the current user's session JWT for auth (reject if no session)
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("请先登录后再使用AI助手");
+      const authToken = session.access_token;
+
       const resp = await fetch(EDGE_FN_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRpdmluaWZzdWNmZnN4eWl5eXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1MjgxNjksImV4cCI6MjA5MDEwNDE2OX0.VFqHzTvjN7wwo8ctwOfmL8-k7VJX93QeYDOzT8yLUuE'}`,
+          "Authorization": `Bearer ${authToken}`,
         },
         body: JSON.stringify({ provider, model, system: buildSystemPrompt(), messages: apiMessages })
       });
@@ -1442,7 +1466,7 @@ function RecurringTasksView({ data, save, user, taskInstancesHook, auditLog }) {
 // ─── EMPLOYEE VIEW ────────────────────────
 // ═══════════════════════════════════════════
 function EmployeeApp({data,user,save,syncStatus,auditLog,taskInstancesHook,deliverablesHook,onLogout}) {
-  const [view,setView]=useState("mytasks");
+  const [view,setView]=useState("mytasks");const isMobile=useIsMobile();const[sidebarOpen,setSidebarOpen]=useState(false);
   const {projects,staff}=data;
   const allActions=getAllActions(projects);
   const myActions=allActions.filter(a=>a.staffId===user.id);
@@ -1513,19 +1537,18 @@ function EmployeeApp({data,user,save,syncStatus,auditLog,taskInstancesHook,deliv
   const teamActions=allActions.filter(a=>a.staffId!==user.id);
   const teamByPerson={};teamActions.forEach(a=>{if(!teamByPerson[a.staffId])teamByPerson[a.staffId]={person:staff.find(x=>x.id===a.staffId),actions:[]};teamByPerson[a.staffId].actions.push(a);});
 
-  return<div style={{display:"flex",minHeight:"100vh",fontFamily:T.font,background:T.bg}}>
-    <GlobalStyles/>
-    <div style={{width:220,minHeight:"100vh",background:T.sidebar,display:"flex",flexDirection:"column",flexShrink:0,borderRight:`1px solid ${T.border}`}}>
+  const sidebarContent=<>
       <div style={{padding:"24px 20px 20px"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <div style={{width:32,height:32,borderRadius:8,background:T.accent,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff"}}><Mountain size={18}/></div>
           <div><div style={{fontSize:14,fontWeight:700,color:T.text1}}>第二座山</div><div style={{fontSize:10,color:T.text3}}>运营管理</div></div>
+          {isMobile&&<button onClick={()=>setSidebarOpen(false)} style={{marginLeft:"auto",background:"none",border:"none",cursor:"pointer",color:T.text3,padding:4}}><X size={18}/></button>}
         </div>
       </div>
       <nav style={{flex:1,padding:"0 10px"}}>
         {[{id:"mytasks",icon:ListTodo,label:"我的工作"},{id:"recurring",icon:CalendarCheck,label:"周期任务"},{id:"team",icon:Users,label:"团队动态"}].map(n=>{
           const Icon=n.icon;const active=view===n.id;
-          return<div key={n.id}onClick={()=>setView(n.id)}style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",marginBottom:2,borderRadius:T.radiusSm,cursor:"pointer",background:active?T.accentLight:"transparent",color:active?T.accent:T.text2,transition:T.transition,fontWeight:active?600:500}}>
+          return<div key={n.id}onClick={()=>{setView(n.id);if(isMobile)setSidebarOpen(false);}}style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",marginBottom:2,borderRadius:T.radiusSm,cursor:"pointer",background:active?T.accentLight:"transparent",color:active?T.accent:T.text2,transition:T.transition,fontWeight:active?600:500}}>
             <Icon size={18}/><span style={{fontSize:13}}>{n.label}</span>
             {n.id==="mytasks"&&myActions.filter(a=>a.progress!==2).length>0&&<span style={{background:T.danger,color:"#fff",fontSize:9,fontWeight:700,borderRadius:10,padding:"2px 6px",marginLeft:"auto"}}>{myActions.filter(a=>a.progress!==2).length}</span>}
           </div>;
@@ -1539,8 +1562,23 @@ function EmployeeApp({data,user,save,syncStatus,auditLog,taskInstancesHook,deliv
           <button onClick={onLogout} title="退出登录" style={{background:T.borderLight,border:"none",width:28,height:28,borderRadius:14,cursor:"pointer",color:T.text3,display:"flex",alignItems:"center",justifyContent:"center",transition:T.transition,flexShrink:0}} onMouseEnter={e=>e.target.style.color=T.danger} onMouseLeave={e=>e.target.style.color=T.text3}><LogOut size={14}/></button>
         </div>
       </div>
+  </>;
+
+  return<div style={{display:"flex",minHeight:"100vh",fontFamily:T.font,background:T.bg}}>
+    <GlobalStyles/>
+    {/* Mobile header bar */}
+    {isMobile&&<div style={{position:"fixed",top:0,left:0,right:0,zIndex:50,background:T.sidebar,borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",padding:"10px 16px",gap:12,boxShadow:T.shadow}}>
+      <button onClick={()=>setSidebarOpen(true)} style={{background:"none",border:"none",cursor:"pointer",color:T.text1,padding:4,display:"flex"}}><Menu size={22}/></button>
+      <div style={{flex:1}}><div style={{fontSize:15,fontWeight:700,color:T.text1}}>第二座山</div></div>
+      <Avatar name={user.name} color={user.color||T.accent} size={28}/>
+    </div>}
+    {/* Sidebar overlay */}
+    {isMobile&&sidebarOpen&&<div className="mobile-overlay" onClick={()=>setSidebarOpen(false)}/>}
+    {/* Sidebar */}
+    <div className={isMobile?(sidebarOpen?"mobile-sidebar mobile-sidebar-visible":"mobile-sidebar mobile-sidebar-hidden"):""} style={{width:220,minHeight:"100vh",background:T.sidebar,display:"flex",flexDirection:"column",flexShrink:0,borderRight:`1px solid ${T.border}`,transition:"transform 0.3s ease",...(isMobile&&!sidebarOpen?{position:"fixed",left:0,top:0}:{})}}>
+      {sidebarContent}
     </div>
-    <main style={{flex:1,padding:"28px 36px",overflowY:"auto",maxHeight:"100vh"}}>
+    <main style={{flex:1,padding:isMobile?"68px 16px 16px":"28px 36px",overflowY:"auto",maxHeight:"100vh"}}>
       {view==="mytasks"&&<div style={{animation:"fadeIn 0.3s ease"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24}}>
           <div><h2 style={{margin:"0 0 4px",fontSize:22,fontWeight:700,color:T.text1}}>{user.name}，今天也要加油</h2><p style={{margin:0,fontSize:13,color:T.text3}}>共 {myActions.length} 项 · 已完成 <span style={{color:T.success,fontWeight:700}}>{doneCount}</span> · 待完成 <span style={{color:T.warning,fontWeight:700}}>{myActions.length-doneCount}</span></p></div>
@@ -1646,26 +1684,25 @@ function GlobalSearchBar({data,onNavigate}){
 }
 
 function AdminApp({data,user,save,syncStatus,auditLog,taskInstancesHook,deliverablesHook,onLogout}) {
-  const[view,setView]=useState("overview");const[showHidden,setShowHidden]=useState(false);
+  const[view,setView]=useState("overview");const[showHidden,setShowHidden]=useState(false);const isMobile=useIsMobile();const[sidebarOpen,setSidebarOpen]=useState(false);
   const handleSearchNav=(type,id)=>{
     if(type==="action"||type==="project")setView("taskfilter");
     else if(type==="staff")setView("staff");
     else if(type==="risk")setView("risks");
   };
-  return<div style={{display:"flex",minHeight:"100vh",fontFamily:T.font,background:T.bg}}>
-    <GlobalStyles/>
-    <div style={{width:240,minHeight:"100vh",background:T.sidebar,display:"flex",flexDirection:"column",flexShrink:0,borderRight:`1px solid ${T.border}`}}>
+  const adminSidebarContent=<>
       <div style={{padding:"24px 20px 20px"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <div style={{width:34,height:34,borderRadius:9,background:T.accent,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff"}}><Mountain size={18}/></div>
           <div style={{flex:1}}><div style={{fontSize:15,fontWeight:700,color:T.text1}}>第二座山</div><div style={{fontSize:10,color:T.text3}}>管理后台</div></div>
           <button onClick={()=>setShowHidden(h=>!h)} style={{background:"none",border:"none",cursor:"pointer",padding:6,borderRadius:6,color:showHidden?T.accent:T.text3,transition:T.transition,display:"flex",alignItems:"center",opacity:showHidden?1:0.45}} onMouseEnter={e=>{e.currentTarget.style.opacity=1;e.currentTarget.style.background=T.borderLight;}} onMouseLeave={e=>{e.currentTarget.style.opacity=showHidden?1:0.45;e.currentTarget.style.background="none";}}>{showHidden?<Eye size={15}/>:<EyeOff size={15}/>}</button>
+          {isMobile&&<button onClick={()=>setSidebarOpen(false)} style={{background:"none",border:"none",cursor:"pointer",color:T.text3,padding:4,display:"flex"}}><X size={18}/></button>}
         </div>
       </div>
       <GlobalSearchBar data={data} onNavigate={handleSearchNav}/>
       <nav style={{flex:1,padding:"0 10px",overflowY:"auto"}}>
         {ADMIN_NAV.map(n=>{const Icon=n.icon;const active=view===n.id;
-          return<div key={n.id}onClick={()=>setView(n.id)}style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",marginBottom:2,borderRadius:T.radiusSm,cursor:"pointer",background:active?T.accentLight:"transparent",color:active?T.accent:T.text2,transition:T.transition,fontWeight:active?600:500}}>
+          return<div key={n.id}onClick={()=>{setView(n.id);if(isMobile)setSidebarOpen(false);}}style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",marginBottom:2,borderRadius:T.radiusSm,cursor:"pointer",background:active?T.accentLight:"transparent",color:active?T.accent:T.text2,transition:T.transition,fontWeight:active?600:500}}>
             <Icon size={18}/><span style={{fontSize:13}}>{n.label}</span>
           </div>;
         })}
@@ -1678,8 +1715,23 @@ function AdminApp({data,user,save,syncStatus,auditLog,taskInstancesHook,delivera
           <button onClick={onLogout} title="退出登录" style={{background:T.borderLight,border:"none",width:28,height:28,borderRadius:14,cursor:"pointer",color:T.text3,display:"flex",alignItems:"center",justifyContent:"center",transition:T.transition,flexShrink:0}} onMouseEnter={e=>e.target.style.color=T.danger} onMouseLeave={e=>e.target.style.color=T.text3}><LogOut size={14}/></button>
         </div>
       </div>
+  </>;
+
+  return<div style={{display:"flex",minHeight:"100vh",fontFamily:T.font,background:T.bg}}>
+    <GlobalStyles/>
+    {/* Mobile header bar */}
+    {isMobile&&<div style={{position:"fixed",top:0,left:0,right:0,zIndex:50,background:T.sidebar,borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",padding:"10px 16px",gap:12,boxShadow:T.shadow}}>
+      <button onClick={()=>setSidebarOpen(true)} style={{background:"none",border:"none",cursor:"pointer",color:T.text1,padding:4,display:"flex"}}><Menu size={22}/></button>
+      <div style={{flex:1}}><div style={{fontSize:15,fontWeight:700,color:T.text1}}>第二座山</div></div>
+      <Avatar name={user.name} color={user.color||T.accent} size={28}/>
+    </div>}
+    {/* Sidebar overlay */}
+    {isMobile&&sidebarOpen&&<div className="mobile-overlay" onClick={()=>setSidebarOpen(false)}/>}
+    {/* Sidebar */}
+    <div className={isMobile?(sidebarOpen?"mobile-sidebar mobile-sidebar-visible":"mobile-sidebar mobile-sidebar-hidden"):""} style={{width:240,minHeight:"100vh",background:T.sidebar,display:"flex",flexDirection:"column",flexShrink:0,borderRight:`1px solid ${T.border}`,transition:"transform 0.3s ease",...(isMobile&&!sidebarOpen?{position:"fixed",left:0,top:0}:{})}}>
+      {adminSidebarContent}
     </div>
-    <main style={{flex:1,padding:"28px 36px",overflowY:"auto",maxHeight:"100vh"}}>
+    <main style={{flex:1,padding:isMobile?"68px 16px 16px":"28px 36px",overflowY:"auto",maxHeight:"100vh"}}>
       {/* vData: data with hidden projects filtered out (for all views except ProjectsView) */}
       {(()=>{try{const vData=showHidden?data:{...data,projects:(data.projects||[]).filter(p=>!p.hidden)};return<ErrorBoundary key={view}><div style={{animation:"fadeIn 0.3s ease"}}>
         {view==="overview"&&<OverviewView data={vData} save={save} auditLog={auditLog} user={user}/>}
@@ -1719,7 +1771,7 @@ function OverviewView({data,save,auditLog,user}){
     <h2 style={{margin:"0 0 20px",fontSize:22,fontWeight:700,color:T.text1,display:"flex",alignItems:"center",gap:8}}><LayoutDashboard size={22}/> 总览面板</h2>
     <DeadlineAlerts actions={actions} staff={staff} />
     <AIAssistant data={data} save={save} auditLog={auditLog} user={user} />
-    <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12,marginBottom:24}}>
+    <div className="grid-responsive-5" style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12,marginBottom:24}}>
       {stats.map((s,i)=>{const Icon=s.icon;return<Card key={i} style={{padding:"16px 18px"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
           <span style={{fontSize:12,color:T.text3,fontWeight:600}}>{s.l}</span>
@@ -1728,11 +1780,11 @@ function OverviewView({data,save,auditLog,user}){
         <div style={{fontSize:26,fontWeight:800,color:s.c}}>{s.v}</div>
       </Card>;})}
     </div>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:24}}>
+    <div className="grid-responsive-2" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:24}}>
       <Card style={{padding:"20px 22px"}}><h4 style={{margin:"0 0 14px",fontSize:14,fontWeight:700,color:T.text1}}>项目完成度</h4><ResponsiveContainer width="100%" height={180}><BarChart data={sorted.map(p=>{const pa=getAllActions([p]);return{name:p.name.slice(0,4),total:pa.length,done:pa.filter(a=>a.progress===2).length};})}barSize={18}><XAxis dataKey="name" tick={{fontSize:10,fill:T.text3}}/><YAxis tick={{fontSize:11,fill:T.text3}}/><Tooltip contentStyle={{borderRadius:8,fontSize:12,border:`1px solid ${T.border}`,boxShadow:T.shadowMd}}/><Bar dataKey="total" fill={T.borderLight} name="总动作" radius={[4,4,0,0]}/><Bar dataKey="done" fill={T.accent} name="已完成" radius={[4,4,0,0]}/></BarChart></ResponsiveContainer></Card>
       <Card style={{padding:"20px 22px"}}><h4 style={{margin:"0 0 14px",fontSize:14,fontWeight:700,color:T.text1}}>人员工作量</h4><ResponsiveContainer width="100%" height={180}><BarChart data={workload} barSize={18}><XAxis dataKey="name" tick={{fontSize:10,fill:T.text3}}/><YAxis tick={{fontSize:11,fill:T.text3}}/><Tooltip contentStyle={{borderRadius:8,fontSize:12,border:`1px solid ${T.border}`,boxShadow:T.shadowMd}}/><Legend iconSize={10} wrapperStyle={{fontSize:11}}/><Bar dataKey="done" stackId="a" fill={T.success} name="完成"/><Bar dataKey="prog" stackId="a" fill={T.warning} name="进行中" radius={[4,4,0,0]}/></BarChart></ResponsiveContainer></Card>
     </div>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14}}>
+    <div className="grid-responsive-3" style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14}}>
       {staff.map(s=>{const sa=actions.filter(a=>a.staffId===s.id);const d=sa.filter(a=>a.progress===2).length;const pct=sa.length?Math.round(d/sa.length*100):0;
         return<Card key={s.id} style={{padding:"16px 20px"}}>
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
@@ -1974,7 +2026,7 @@ function KanbanView({data,save,auditLog,user}){const{projects,staff}=data;const 
         {projects.map(p=><button key={p.id} onClick={()=>setFilter(p.id)} style={{padding:"6px 14px",borderRadius:20,fontSize:12,fontWeight:600,border:`1.5px solid ${filter===p.id?T.accent:T.border}`,background:filter===p.id?T.accentLight:T.card,color:filter===p.id?T.accent:T.text2,cursor:"pointer",transition:T.transition,display:"flex",alignItems:"center",gap:4,boxShadow:filter===p.id?T.shadowBtn:"none"}}><ProjectDot color={p.color} size={8}/>{p.name.slice(0,3)}</button>)}
       </div>
     </div>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14}}>
+    <div className="grid-responsive-3" style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14}}>
       {columns.map(col=><div key={col.v} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(dragItem){
         const oldStatus = STATUS.find(s=>s.v===dragItem.progress);
         save({...data,projects:updateActionInProjects(projects,dragItem.id,{progress:col.v})});
@@ -2468,7 +2520,7 @@ function RiskView({data,save,auditLog,user}){
     </div>
 
     {/* Risk matrix mini */}
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:20}}>
+    <div className="grid-responsive-3" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:20}}>
       {[{l:"高风险",count:risks.filter(r=>getRiskScore(r)>=6&&r.status!=="closed").length,c:T.danger,icon:AlertOctagon},
         {l:"中风险",count:risks.filter(r=>{const s=getRiskScore(r);return s>=3&&s<6&&r.status!=="closed";}).length,c:T.warning,icon:ShieldAlert},
         {l:"已关闭",count:risks.filter(r=>r.status==="closed").length,c:T.success,icon:CheckCircle2}
@@ -2586,7 +2638,7 @@ function ReportsView({data}){const{projects,staff}=data;const actions=getAllActi
       <h2 style={{margin:0,fontSize:22,fontWeight:700,color:T.text1,display:"flex",alignItems:"center",gap:8}}><BarChart3 size={22}/> 报表</h2>
       <Btn onClick={()=>setReportModal(true)}><FileText size={14}/> 周报</Btn>
     </div>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+    <div className="grid-responsive-2" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
       <Card style={{padding:"18px 20px"}}><h4 style={{margin:"0 0 12px",fontSize:13,fontWeight:700,color:T.text1}}>任务分布</h4><ResponsiveContainer width="100%" height={200}><BarChart data={workload} barSize={18}><XAxis dataKey="name" tick={{fontSize:11,fill:T.text3}}/><YAxis tick={{fontSize:11,fill:T.text3}}/><Tooltip contentStyle={{borderRadius:8,fontSize:12,border:`1px solid ${T.border}`,boxShadow:T.shadowMd}}/><Legend iconSize={10} wrapperStyle={{fontSize:11}}/><Bar dataKey="done" stackId="a" fill={T.success} name="完成"/><Bar dataKey="prog" stackId="a" fill={T.warning} name="进行中" radius={[4,4,0,0]}/></BarChart></ResponsiveContainer></Card>
       <Card style={{padding:"18px 20px"}}><h4 style={{margin:"0 0 12px",fontSize:13,fontWeight:700,color:T.text1}}>周工时</h4><ResponsiveContainer width="100%" height={200}><BarChart data={workload} barSize={28}><XAxis dataKey="name" tick={{fontSize:11,fill:T.text3}}/><YAxis tick={{fontSize:11,fill:T.text3}}/><Tooltip contentStyle={{borderRadius:8,fontSize:12,border:`1px solid ${T.border}`,boxShadow:T.shadowMd}}/><Bar dataKey="hours" fill={T.accent} name="h" radius={[6,6,0,0]}/></BarChart></ResponsiveContainer></Card>
     </div>
@@ -2998,9 +3050,9 @@ function DeliverablesView({data,user,deliverablesHook,auditLog}) {
       {previewUrl&&<div style={{textAlign:"center"}}>
         {/\.(jpg|jpeg|png|gif|webp|svg)/i.test(previewUrl)?<img src={previewUrl} style={{maxWidth:"100%",maxHeight:500,borderRadius:T.radius}} alt="preview"/>:
          /\.(mp4|mov|webm)/i.test(previewUrl)?<video src={previewUrl} controls style={{maxWidth:"100%",maxHeight:500,borderRadius:T.radius}}/>:
-         /\.pdf/i.test(previewUrl)?<iframe src={previewUrl} style={{width:"100%",height:500,border:"none",borderRadius:T.radius}}/>:
+         /\.pdf/i.test(previewUrl)?<iframe src={previewUrl} sandbox="allow-same-origin" style={{width:"100%",height:500,border:"none",borderRadius:T.radius}}/>:
          <div style={{padding:40,color:T.text3}}><File size={48} strokeWidth={1.5}/><p>此文件类型不支持预览</p></div>}
-        <div style={{marginTop:12}}><a href={previewUrl} target="_blank" rel="noopener" style={{color:T.accent,fontSize:13,fontWeight:600,textDecoration:"none"}}>
+        <div style={{marginTop:12}}><a href={previewUrl} target="_blank" rel="noopener noreferrer" style={{color:T.accent,fontSize:13,fontWeight:600,textDecoration:"none"}}>
           <Download size={14} style={{marginRight:4,verticalAlign:"middle"}}/> 下载文件
         </a></div>
       </div>}
@@ -3177,9 +3229,9 @@ function LoginScreen({onLogin, appData}) {
 
   const go = mode === "login" ? doLogin : doRegister;
 
-  return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:T.bg,fontFamily:T.font}}>
+  return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:T.bg,fontFamily:T.font,padding:"16px"}}>
     <GlobalStyles/>
-    <div style={{background:T.card,borderRadius:20,padding:"48px 44px",width:400,boxShadow:"0 20px 60px rgba(0,0,0,0.08)",border:`1px solid ${T.borderLight}`}}>
+    <div style={{background:T.card,borderRadius:20,padding:"48px 44px",width:"100%",maxWidth:400,boxShadow:"0 20px 60px rgba(0,0,0,0.08)",border:`1px solid ${T.borderLight}`}}>
       <div style={{textAlign:"center",marginBottom:32}}>
         <div style={{width:56,height:56,borderRadius:14,background:T.accent,display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:16,color:"#fff",boxShadow:`0 4px 16px ${T.accent}40`}}><Mountain size={28}/></div>
         <h1 style={{margin:0,fontSize:22,fontWeight:700,color:T.text1}}>第二座山集团</h1>
