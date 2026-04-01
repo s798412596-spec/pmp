@@ -920,7 +920,8 @@ ${staffSummary}
 - 自动识别并建议里程碑（如"账号开设 → 内容规划 → 首批发布 → 运营稳定"）
 - 自动识别潜在风险（如同一人任务过多、截止日太紧、依赖链过长）
 - 当信息足够时 needsMoreInfo=false 并给出完整 operations
-- 当信息不够时 needsMoreInfo=true，operations 可以为空或给出部分（标注哪些字段留空待补）`;
+- 当信息不够时 needsMoreInfo=true，operations 可以为空或给出部分（标注哪些字段留空待补）
+- **重要**：message 字段永远只写一两句中文自然语言（如"已找到滕丞的3个任务，请确认删除"），绝对不能把 operations 里的 JSON 结构放进 message 字段`;
   };
 
   const callAI = async (userText) => {
@@ -986,13 +987,20 @@ ${staffSummary}
         if(!msg) return "";
         // Remove ```json ... ``` or ``` ... ``` blocks
         let s = msg.replace(/```[\s\S]*?```/g, "").trim();
-        // Remove lines that look like JSON (start with { " [ or contain key:value patterns)
+        // Remove lines that look like JSON structure
         s = s.split("\n").filter(line => {
           const t = line.trim();
           if(!t) return false;
-          if(/^[\{\[\"]/.test(t) && t.length > 5) return false;
+          // Pure structural chars: { } [ ] , or combinations
+          if(/^[\{\}\[\],]+$/.test(t)) return false;
+          // Lines starting with { or [ (JSON objects/arrays, any length)
+          if(/^[\{\[]/.test(t)) return false;
+          // JSON key-value: "key": ...
           if(/^\s*"[a-zA-Z_]+"\s*:/.test(t)) return false;
-          if(/^\s*[\}\]],?\s*$/.test(t)) return false;
+          // Lines ending with { (nested open brace like "project": {)
+          if(/:\s*[\{\[],?\s*$/.test(t)) return false;
+          // Closing braces with optional comma
+          if(/^[\}\]],?\s*$/.test(t)) return false;
           return true;
         }).join("\n").trim();
         return s || "";
