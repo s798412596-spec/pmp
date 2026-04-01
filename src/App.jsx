@@ -849,7 +849,7 @@ ${staffSummary}
 你必须始终返回纯JSON（不要markdown代码块），格式如下：
 
 {
-  "message": "你对用户说的话（确认理解、追问、总结等）",
+  "message": "你对用户说的自然语言回复（只能是中文纯文字，绝对不能包含任何JSON代码、花括号、引号键值对等，operations结构体只放在operations字段中）",
   "needsMoreInfo": true或false,
   "questions": ["追问问题1", "追问问题2"],
   "operations": [操作列表，当信息足够时才填写],
@@ -966,9 +966,27 @@ ${staffSummary}
         }
       }
 
+      // Sanitize the message field — strip out any JSON code blocks or raw JSON the AI accidentally embedded
+      const sanitizeMsg = (msg) => {
+        if(!msg) return "";
+        // Remove ```json ... ``` or ``` ... ``` blocks
+        let s = msg.replace(/```[\s\S]*?```/g, "").trim();
+        // Remove lines that look like JSON (start with { " [ or contain key:value patterns)
+        s = s.split("\n").filter(line => {
+          const t = line.trim();
+          if(!t) return false;
+          if(/^[\{\[\"]/.test(t) && t.length > 5) return false;
+          if(/^\s*"[a-zA-Z_]+"\s*:/.test(t)) return false;
+          if(/^\s*[\}\]],?\s*$/.test(t)) return false;
+          return true;
+        }).join("\n").trim();
+        return s || "";
+      };
+      const cleanedMsg = sanitizeMsg(parsed.message);
+
       const assistantMsg = {
         role: "assistant",
-        content: parsed.message || "已解析完成",
+        content: cleanedMsg || (parsed.operations?.length > 0 ? "已为您整理好方案，请查看下方操作列表并确认。" : "已解析完成"),
         rawContent: raw,
         parsed,
         hasOps: (parsed.operations||[]).length > 0,
