@@ -774,12 +774,14 @@ function AIAssistant({data,save,auditLog,user}) {
   const [input,setInput] = useState("");
   const [showAIConfig, setShowAIConfig] = useState(false);
   const [loading,setLoading] = useState(false);
-  const [chatMessages,setChatMessages] = useState([]); // {role:"user"|"assistant", content:string, parsed?:object}
+  const [chatMessages,setChatMessages] = useState(()=>{try{return JSON.parse(localStorage.getItem("sm-ai-chat")||"[]");}catch{return [];}}); // {role:"user"|"assistant", content:string, parsed?:object}
   const [pendingOps,setPendingOps] = useState(null); // operations waiting for confirmation
   const chatEndRef = useRef(null);
+  const chatContainerRef = useRef(null);
   const inputRef = useRef(null);
 
-  useEffect(()=>{chatEndRef.current?.scrollIntoView({behavior:"smooth"});},[chatMessages,loading]);
+  useEffect(()=>{try{localStorage.setItem("sm-ai-chat",JSON.stringify(chatMessages));}catch{}
+    if(chatContainerRef.current){chatContainerRef.current.scrollTop=chatContainerRef.current.scrollHeight;}},[chatMessages,loading]);
 
   const getStaffName = (sid) => staff.find(s=>s.id===sid)?.name || "未分配";
   const getProjectName = (pid) => projects.find(p=>p.id===pid)?.name || (pid === "__new__" ? "新项目" : "未知项目");
@@ -908,7 +910,6 @@ ${staffSummary}
         body: JSON.stringify({ provider, model, system: buildSystemPrompt(), messages: apiMessages })
       });
       const result = await resp.json();
-      console.log("AI raw result:", JSON.stringify(result).slice(0, 500));
       if (result.error) throw new Error(result.error);
       const raw = result.text || "";
       // Clean up common AI response issues
@@ -1059,7 +1060,7 @@ ${staffSummary}
     setPendingOps({...pendingOps, operations:pendingOps.operations.filter((_,i)=>i!==idx)});
   };
 
-  const resetChat = () => { setChatMessages([]); setPendingOps(null); setInput(""); };
+  const resetChat = () => { setChatMessages([]); setPendingOps(null); setInput(""); localStorage.removeItem("sm-ai-chat"); };
 
   const OpCard = ({op,idx}) => {
     if(op.type==="add_project"){const p=op.project||{};
@@ -1119,7 +1120,7 @@ ${staffSummary}
     <AIConfigPanel open={showAIConfig} onClose={()=>setShowAIConfig(false)} />
 
     {/* Chat area */}
-    <div style={{maxHeight:480,overflowY:"auto",padding:"16px 24px"}}>
+    <div ref={chatContainerRef} style={{maxHeight:480,overflowY:"auto",padding:"16px 24px"}}>
       {chatMessages.length===0&&<div style={{textAlign:"center",padding:"30px 0",color:T.text3}}>
         <Bot size={32} strokeWidth={1.5} style={{marginBottom:8,color:T.border}}/>
         <div style={{fontSize:13,marginBottom:12}}>告诉我你的需求，我来帮你创建项目和任务</div>
@@ -1200,7 +1201,7 @@ ${staffSummary}
           style={{flex:1,padding:"10px 14px",borderRadius:T.radius,border:`1.5px solid ${T.border}`,fontSize:13,outline:"none",fontFamily:T.font,resize:"none",boxSizing:"border-box",background:T.card,color:T.text1,lineHeight:1.5,transition:T.transition}}
           onFocus={e=>{e.target.style.borderColor=T.accent;e.target.style.boxShadow=`0 0 0 3px ${T.accent}20`;}}
           onBlur={e=>{e.target.style.borderColor=T.border;e.target.style.boxShadow="none";}}
-          onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();callAI(input);}}}
+          onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing){e.preventDefault();callAI(input);}}}
         />
         <Btn onClick={()=>callAI(input)} disabled={!input.trim()||loading} style={{height:40,padding:"0 18px"}}>
           {loading?<Loader2 size={16} style={{animation:"spin 1s linear infinite"}}/>:<Send size={16}/>}
