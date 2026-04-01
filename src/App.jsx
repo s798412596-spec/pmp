@@ -4,7 +4,7 @@ import {
   Mountain, LayoutDashboard, Settings, ClipboardList, CalendarDays, BarChart3, Users,
   ChevronRight, ChevronDown, Plus, Pencil, Trash2, X, Check, CheckCircle2, Circle,
   CircleDot, Smartphone, Store, MessageCircle, Radio, Pin, RefreshCw, Target, Clock,
-  FileText, AlertCircle, Bot, Send, Loader2, Copy, ListTodo,
+  FileText, AlertCircle, Bot, Send, Loader2, Copy, ListTodo, MessageSquare,
   UserCircle, Phone, Star, Search, CalendarClock, TrendingUp,
   ShieldAlert, History, CalendarCheck, Filter, Download, TriangleAlert, LogOut,
   GitBranch, Milestone, GanttChartSquare, AlertOctagon, Link2, Paperclip, Eye,
@@ -773,15 +773,41 @@ function AIAssistant({data,save,auditLog,user}) {
   const {projects,staff} = data;
   const [input,setInput] = useState("");
   const [showAIConfig, setShowAIConfig] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [loading,setLoading] = useState(false);
-  const [chatMessages,setChatMessages] = useState(()=>{try{return JSON.parse(localStorage.getItem("sm-ai-chat")||"[]");}catch{return [];}}); // {role:"user"|"assistant", content:string, parsed?:object}
-  const [pendingOps,setPendingOps] = useState(null); // operations waiting for confirmation
+  const [chatMessages,setChatMessages] = useState(()=>{try{return JSON.parse(localStorage.getItem("sm-ai-chat")||"[]");}catch{return [];}});
+  const [chatHistory,setChatHistory] = useState(()=>{try{return JSON.parse(localStorage.getItem("sm-ai-history")||"[]");}catch{return [];}});
+  const [pendingOps,setPendingOps] = useState(null);
   const chatEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const inputRef = useRef(null);
 
   useEffect(()=>{try{localStorage.setItem("sm-ai-chat",JSON.stringify(chatMessages));}catch{}
     if(chatContainerRef.current){chatContainerRef.current.scrollTop=chatContainerRef.current.scrollHeight;}},[chatMessages,loading]);
+
+  const saveToHistory = (msgs) => {
+    if(!msgs||msgs.length===0) return;
+    const firstUser = msgs.find(m=>m.role==="user");
+    const title = firstUser ? firstUser.content.slice(0,40)+(firstUser.content.length>40?"...":"") : "对话记录";
+    const session = {id:Date.now().toString(),title,startedAt:Date.now(),messages:msgs};
+    const updated = [session,...chatHistory].slice(0,30);
+    setChatHistory(updated);
+    try{localStorage.setItem("sm-ai-history",JSON.stringify(updated));}catch{}
+  };
+
+  const loadSession = (session) => {
+    if(chatMessages.length>0) saveToHistory(chatMessages);
+    setChatMessages(session.messages);
+    setPendingOps(null);
+    setShowHistory(false);
+  };
+
+  const deleteSession = (id,e) => {
+    e.stopPropagation();
+    const updated = chatHistory.filter(s=>s.id!==id);
+    setChatHistory(updated);
+    try{localStorage.setItem("sm-ai-history",JSON.stringify(updated));}catch{}
+  };
 
   const getStaffName = (sid) => staff.find(s=>s.id===sid)?.name || "未分配";
   const getProjectName = (pid) => projects.find(p=>p.id===pid)?.name || (pid === "__new__" ? "新项目" : "未知项目");
@@ -1060,7 +1086,7 @@ ${staffSummary}
     setPendingOps({...pendingOps, operations:pendingOps.operations.filter((_,i)=>i!==idx)});
   };
 
-  const resetChat = () => { setChatMessages([]); setPendingOps(null); setInput(""); localStorage.removeItem("sm-ai-chat"); };
+  const resetChat = () => { saveToHistory(chatMessages); setChatMessages([]); setPendingOps(null); setInput(""); localStorage.removeItem("sm-ai-chat"); };
 
   const OpCard = ({op,idx}) => {
     if(op.type==="add_project"){const p=op.project||{};
@@ -1114,10 +1140,40 @@ ${staffSummary}
         <p style={{margin:0,fontSize:12,color:T.text3}}>多轮对话 · 自动创建项目和任务 · 里程碑/风险联动</p>
       </div>
       {chatMessages.length>0&&<Btn small v="secondary" onClick={resetChat}><RefreshCw size={12}/> 新对话</Btn>}
+      <Btn small v="ghost" onClick={()=>setShowHistory(v=>!v)} style={{color:showHistory?T.accent:T.text3,position:"relative"}}>
+        <History size={14}/>
+        {chatHistory.length>0&&<span style={{position:"absolute",top:-4,right:-4,width:14,height:14,borderRadius:7,background:T.accent,color:"#fff",fontSize:9,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}>{chatHistory.length>9?"9+":chatHistory.length}</span>}
+      </Btn>
       <Btn small v="ghost" onClick={()=>setShowAIConfig(true)} style={{color:T.text3}}><Settings size={14}/></Btn>
     </div>
 
     <AIConfigPanel open={showAIConfig} onClose={()=>setShowAIConfig(false)} />
+
+    {/* History Panel */}
+    {showHistory&&<div style={{borderBottom:`1px solid ${T.borderLight}`,background:T.bg}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 24px 6px"}}>
+        <span style={{fontSize:12,fontWeight:700,color:T.text2,display:"flex",alignItems:"center",gap:6}}><History size={13}/> 历史对话 ({chatHistory.length})</span>
+        {chatHistory.length>0&&<button onClick={()=>{if(window.confirm("确定清空所有历史记录？")){setChatHistory([]);localStorage.removeItem("sm-ai-history");}}} style={{fontSize:11,color:T.danger,background:"none",border:"none",cursor:"pointer",padding:"2px 6px"}}>清空全部</button>}
+      </div>
+      {chatHistory.length===0?<div style={{padding:"20px 24px",textAlign:"center",color:T.text3,fontSize:12}}>暂无历史记录</div>:
+      <div style={{maxHeight:260,overflowY:"auto",padding:"0 12px 10px"}}>
+        {chatHistory.map(s=>{
+          const d=new Date(s.startedAt);
+          const dateStr=`${d.getMonth()+1}/${d.getDate()} ${d.getHours().toString().padStart(2,"0")}:${d.getMinutes().toString().padStart(2,"0")}`;
+          const msgCount=s.messages.length;
+          return<div key={s.id} onClick={()=>loadSession(s)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderRadius:T.radiusSm,cursor:"pointer",transition:T.transition,marginBottom:2}}
+            onMouseEnter={e=>e.currentTarget.style.background=T.borderLight} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+            <MessageSquare size={13} color={T.text3} style={{flexShrink:0}}/>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:12,color:T.text1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{s.title}</div>
+              <div style={{fontSize:10,color:T.text3,marginTop:1}}>{dateStr} · {msgCount} 条消息</div>
+            </div>
+            <button onClick={e=>deleteSession(s.id,e)} title="删除" style={{background:"none",border:"none",color:T.text3,cursor:"pointer",padding:4,flexShrink:0,opacity:0.6,lineHeight:1}}
+              onMouseEnter={e=>e.currentTarget.style.color=T.danger} onMouseLeave={e=>e.currentTarget.style.color=T.text3}><X size={12}/></button>
+          </div>;
+        })}
+      </div>}
+    </div>}
 
     {/* Chat area */}
     <div ref={chatContainerRef} style={{maxHeight:480,overflowY:"auto",padding:"16px 24px"}}>
