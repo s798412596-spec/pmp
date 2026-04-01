@@ -938,8 +938,8 @@ ${staffSummary}
             .replace(/,\s*([}\]])/g, "$1");
           parsed = JSON.parse(fixed);
         } catch (e2) {
-          // If still fails, create a friendly message from the raw text
-          parsed = { message: raw.slice(0, 500), operations: [], needsMoreInfo: true, questions: ["请重新描述你的需求，我来帮你处理"] };
+          // If still fails, show the raw AI response as a plain message
+          parsed = { message: raw || "AI未能生成有效响应，请重试", operations: [], needsMoreInfo: false, questions: [] };
         }
       }
 

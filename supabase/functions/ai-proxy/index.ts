@@ -92,20 +92,28 @@ serve(async (req) => {
       const apiKey = Deno.env.get("GEMINI_API_KEY");
       if (!apiKey) throw new Error("GEMINI_API_KEY not set");
 
-      // Use Gemini's OpenAI-compatible endpoint
-      const resp = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: model || "gemini-3.1-pro-preview",
-          max_tokens: 4096,
-          response_format: { type: "json_object" },
-          messages: [{ role: "system", content: system }, ...messages],
-        }),
-      });
+      const geminiModel = model || "gemini-3.1-pro-preview";
+      // Convert messages: assistant → model role for Gemini native API
+      const geminiContents = messages.map((m: any) => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: m.content }],
+      }));
+
+      const resp = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            system_instruction: { parts: [{ text: system }] },
+            contents: geminiContents,
+            generationConfig: {
+              responseMimeType: "application/json",
+              maxOutputTokens: 4096,
+            },
+          }),
+        }
+      );
 
       if (!resp.ok) {
         const errBody = await resp.text();
@@ -113,7 +121,7 @@ serve(async (req) => {
       }
 
       const result = await resp.json();
-      responseText = result.choices?.[0]?.message?.content || "";
+      responseText = result.candidates?.[0]?.content?.parts?.[0]?.text || "";
     }
 
     // ─── DeepSeek ────────────────────────
