@@ -702,10 +702,10 @@ function DeadlineAlerts({ actions, staff }) {
 // ─── AI CONFIG PANEL ─────────────────────
 // ═══════════════════════════════════════════
 const AI_PROVIDERS = [
-  { v: "gemini", l: "Google Gemini", models: ["gemini-3.1-pro-preview", "gemini-3-flash", "gemini-3.1-flash-lite"] },
-  { v: "anthropic", l: "Anthropic Claude", models: ["claude-sonnet-4-6-20260217", "claude-opus-4-6-20260205", "claude-haiku-4-5-20251015"] },
-  { v: "openai", l: "OpenAI", models: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.3-instant"] },
-  { v: "deepseek", l: "DeepSeek", models: ["deepseek-v3.2", "deepseek-r1", "deepseek-v3"] },
+  { v: "gemini", l: "Google Gemini", models: ["gemini-2.5-pro-preview-03-25", "gemini-2.0-flash", "gemini-2.0-flash-lite"] },
+  { v: "anthropic", l: "Anthropic Claude", models: ["claude-3-7-sonnet-20250219", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"] },
+  { v: "openai", l: "OpenAI", models: ["gpt-4o", "gpt-4o-mini", "o3-mini"] },
+  { v: "deepseek", l: "DeepSeek", models: ["deepseek-chat", "deepseek-reasoner"] },
   { v: "custom", l: "自定义 (OpenAI兼容)", models: [] },
 ];
 
@@ -914,7 +914,13 @@ ${staffSummary}
     try {
       const aiConfig = JSON.parse(localStorage.getItem("sm-ai-config") || '{}');
       const provider = aiConfig.provider || "gemini";
-      const model = aiConfig.model || "";
+      // Auto-correct invalid model names (e.g. leftover from old config)
+      const providerDef = AI_PROVIDERS.find(p => p.v === provider);
+      const validModels = providerDef?.models || [];
+      const savedModel = aiConfig.model || "";
+      const model = (validModels.length > 0 && savedModel && !validModels.includes(savedModel))
+        ? validModels[0]
+        : savedModel;
       const EDGE_FN_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-proxy`;
 
       // Build messages array for multi-turn
@@ -963,7 +969,9 @@ ${staffSummary}
           parsed = JSON.parse(fixed);
         } catch (e2) {
           // If still fails, show as plain error — never set needsMoreInfo/questions here
-          setChatMessages([...updatedChat, {role:"assistant", content:"AI 返回的格式无法解析，请重试或换一种描述方式。", isError:true}]);
+          console.error("AI parse failed. Raw response:", raw.slice(0, 500));
+          const preview = raw.slice(0, 120).replace(/\n/g, " ");
+          setChatMessages([...updatedChat, {role:"assistant", content:`AI 返回的格式无法解析，请重试。\n\n原始内容片段：${preview}`, isError:true}]);
           setLoading(false);
           return;
         }
