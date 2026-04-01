@@ -913,6 +913,7 @@ ${staffSummary}
         body: JSON.stringify({ provider, model, system: buildSystemPrompt(), messages: apiMessages })
       });
       const result = await resp.json();
+      console.log("AI raw result:", JSON.stringify(result).slice(0, 500));
       if (result.error) throw new Error(result.error);
       const raw = result.text || "";
       // Clean up common AI response issues
