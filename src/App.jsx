@@ -815,7 +815,10 @@ function AIAssistant({data,save,auditLog,user}) {
   const buildSystemPrompt = () => {
     const projSummary = projects.map(p => {
       const cats = (p.categories||[]).map(c => {
-        const ress = (c.resources||[]).map(r => `      资源: "${r.name}" (id:${r.id}, type:${r.type}, platform:${r.platform||""}, owner:${r.owner})`).join("\n");
+        const ress = (c.resources||[]).map(r => {
+          const acts = (r.actions||[]).map(a => `          动作: "${a.name}" (id:${a.id}, aType:${a.aType}, staffId:${a.staffId||""}, deadline:${a.deadline||""})`).join("\n");
+          return `      资源: "${r.name}" (id:${r.id}, type:${r.type}, platform:${r.platform||""}, owner:${r.owner})\n${acts}`;
+        }).join("\n");
         return `    类别: "${c.name}" (id:${c.id}, cat:${c.cat})\n${ress}`;
       }).join("\n");
       return `  项目: "${p.name}" (id:${p.id}, priority:${p.priority})\n${cats}`;
@@ -828,7 +831,7 @@ function AIAssistant({data,save,auditLog,user}) {
 1. **严格关联**：系统是四级结构 L1项目 → L2工作类别 → L3资源/账号 → L4执行动作，每个层级必须挂载到上级
 2. **不猜测留空**：用户没有明确提到的信息一律留空（""或0），等待用户后续补充。绝不自行推断截止日期、优先级、工时、频率等
 3. **多轮追问**：当信息不完整时，主动追问缺失的关键信息。每次最多追问3个问题
-4. **只做创建**：你只负责创建新的项目/类别/资源/动作，不修改、不删除、不调整现有数据
+4. **全面管理**：你可以创建、修改、删除项目/类别/资源/动作，所有变更都会在用户确认后执行
 
 ## 当前数据
 项目和资源：
@@ -891,6 +894,18 @@ ${staffSummary}
 
 4. add_action — 向已有资源添加动作（L4）
 { "type": "add_action", "projectId": "已有项目id", "categoryId": "已有类别id", "resourceId": "已有资源id", "action": {"name":"","aType":"","freq":"","count":"","staffId":"","hours":0,"deadline":"","note":""} }
+
+5. delete_action — 删除指定动作（通过当前数据中的id）
+{ "type": "delete_action", "projectId": "项目id", "categoryId": "类别id", "resourceId": "资源id", "actionId": "动作id", "actionName": "动作名称（用于预览）" }
+
+6. delete_resource — 删除指定资源及其所有动作
+{ "type": "delete_resource", "projectId": "项目id", "categoryId": "类别id", "resourceId": "资源id", "resourceName": "资源名称（用于预览）" }
+
+7. delete_project — 删除整个项目
+{ "type": "delete_project", "projectId": "项目id", "projectName": "项目名称（用于预览）" }
+
+8. update_action — 修改动作的字段（只传需要修改的字段）
+{ "type": "update_action", "projectId": "项目id", "categoryId": "类别id", "resourceId": "资源id", "actionId": "动作id", "actionName": "动作名称（用于预览）", "updates": {"staffId":"新负责人id","deadline":"新截止日","note":"备注"} }
 
 ### milestones 格式：
 [{ "projectId": "项目id或__new__", "name": "里程碑名称", "date": "2026-04-15或留空" }]
@@ -1071,6 +1086,50 @@ ${staffSummary}
           return {...p, categories: [...(p.categories||[]), newCat]};
         });
       }
+      if (op.type === "delete_action") {
+        opNames.push(`删除: ${op.actionName||op.actionId}`);
+        newProjects = newProjects.map(p => {
+          if (p.id !== op.projectId) return p;
+          return {...p, categories: (p.categories||[]).map(c => {
+            if (c.id !== op.categoryId) return c;
+            return {...c, resources: (c.resources||[]).map(r => {
+              if (r.id !== op.resourceId) return r;
+              return {...r, actions: (r.actions||[]).filter(a => a.id !== op.actionId)};
+            })};
+          })};
+        });
+      }
+      if (op.type === "delete_resource") {
+        opNames.push(`删除资源: ${op.resourceName||op.resourceId}`);
+        newProjects = newProjects.map(p => {
+          if (p.id !== op.projectId) return p;
+          return {...p, categories: (p.categories||[]).map(c => {
+            if (c.id !== op.categoryId) return c;
+            return {...c, resources: (c.resources||[]).filter(r => r.id !== op.resourceId)};
+          })};
+        });
+      }
+      if (op.type === "delete_project") {
+        opNames.push(`删除项目: ${op.projectName||op.projectId}`);
+        newProjects = newProjects.filter(p => p.id !== op.projectId);
+        newRisks = newRisks.filter(r => r.projectId !== op.projectId);
+      }
+      if (op.type === "update_action" && op.updates) {
+        opNames.push(`修改: ${op.actionName||op.actionId}`);
+        newProjects = newProjects.map(p => {
+          if (p.id !== op.projectId) return p;
+          return {...p, categories: (p.categories||[]).map(c => {
+            if (c.id !== op.categoryId) return c;
+            return {...c, resources: (c.resources||[]).map(r => {
+              if (r.id !== op.resourceId) return r;
+              return {...r, actions: (r.actions||[]).map(a => {
+                if (a.id !== op.actionId) return a;
+                return {...a, ...op.updates};
+              })};
+            })};
+          })};
+        });
+      }
     });
 
     // Apply milestones to existing projects
@@ -1144,6 +1203,48 @@ ${staffSummary}
     if(op.type==="add_category"){const c=op.category||{};
       return<div style={{padding:"10px 14px",background:T.borderLight,borderRadius:T.radiusSm,borderLeft:`3px solid ${CAT_COLORS[c.cat]||T.text3}`}}>
         <div style={{display:"flex",alignItems:"center",gap:8}}><ListTodo size={14} color={CAT_COLORS[c.cat]||T.text3}/><span style={{fontSize:13,fontWeight:600,color:T.text1}}>新类别: {c.name}</span><Badge color={CAT_COLORS[c.cat]||T.text3} small>{c.cat}</Badge><div style={{flex:1}}/><button onClick={()=>removeOp(idx)} style={{background:"none",border:"none",color:T.danger,cursor:"pointer",padding:4}}><X size={12}/></button></div>
+      </div>;
+    }
+    if(op.type==="delete_action"){
+      return<div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"#FFF0F0",borderRadius:T.radiusSm,borderLeft:`3px solid ${T.danger}`}}>
+        <Trash2 size={14} color={T.danger}/>
+        <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:T.danger}}>删除动作: {op.actionName||op.actionId}</div>
+          <div style={{fontSize:11,color:T.text3}}>{getProjectName(op.projectId)}</div>
+        </div>
+        <button onClick={()=>removeOp(idx)} style={{background:"none",border:"none",color:T.text3,cursor:"pointer",padding:4}}><X size={12}/></button>
+      </div>;
+    }
+    if(op.type==="delete_resource"){
+      return<div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"#FFF0F0",borderRadius:T.radiusSm,borderLeft:`3px solid ${T.danger}`}}>
+        <Trash2 size={14} color={T.danger}/>
+        <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:T.danger}}>删除资源: {op.resourceName||op.resourceId}</div>
+          <div style={{fontSize:11,color:T.text3}}>{getProjectName(op.projectId)} · 含所有动作</div>
+        </div>
+        <button onClick={()=>removeOp(idx)} style={{background:"none",border:"none",color:T.text3,cursor:"pointer",padding:4}}><X size={12}/></button>
+      </div>;
+    }
+    if(op.type==="delete_project"){
+      return<div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"#FFF0F0",borderRadius:T.radiusSm,borderLeft:`3px solid ${T.danger}`}}>
+        <Trash2 size={14} color={T.danger}/>
+        <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:T.danger}}>删除整个项目: {op.projectName||getProjectName(op.projectId)}</div>
+          <div style={{fontSize:11,color:T.text3}}>将删除项目及其所有数据，操作不可撤销</div>
+        </div>
+        <button onClick={()=>removeOp(idx)} style={{background:"none",border:"none",color:T.text3,cursor:"pointer",padding:4}}><X size={12}/></button>
+      </div>;
+    }
+    if(op.type==="update_action"){
+      const updateFields = Object.entries(op.updates||{}).map(([k,v])=>{
+        if(k==="staffId") return `负责人→${getStaffName(v)}`;
+        if(k==="deadline") return `截止→${v}`;
+        if(k==="note") return `备注→${v}`;
+        return `${k}→${v}`;
+      }).join(" · ");
+      return<div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"#FFF8EC",borderRadius:T.radiusSm,borderLeft:`3px solid ${T.warning}`}}>
+        <Pencil size={14} color={T.warning}/>
+        <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:T.text1}}>修改: {op.actionName||op.actionId}</div>
+          <div style={{fontSize:11,color:T.text3}}>{getProjectName(op.projectId)} · {updateFields}</div>
+        </div>
+        <button onClick={()=>removeOp(idx)} style={{background:"none",border:"none",color:T.text3,cursor:"pointer",padding:4}}><X size={12}/></button>
       </div>;
     }
     return null;
