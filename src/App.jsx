@@ -1639,7 +1639,7 @@ function AdminApp({data,user,save,syncStatus,auditLog,taskInstancesHook,delivera
     </div>
     <main style={{flex:1,padding:"28px 36px",overflowY:"auto",maxHeight:"100vh"}}>
       {/* vData: data with hidden projects filtered out (for all views except ProjectsView) */}
-      {(()=>{const vData=showHidden?data:{...data,projects:(data.projects||[]).filter(p=>!p.hidden)};return<ErrorBoundary key={view}><div style={{animation:"fadeIn 0.3s ease"}}>
+      {(()=>{const vData=showHidden?{...data,projects:(data.projects||[])}:{...data,projects:(data.projects||[]).filter(p=>!p.hidden)};return<ErrorBoundary key={view}><div style={{animation:"fadeIn 0.3s ease"}}>
         {view==="overview"&&<OverviewView data={vData} save={save} auditLog={auditLog} user={user}/>}
         {view==="projects"&&<ProjectsView data={data} save={save} auditLog={auditLog} user={user} showHidden={showHidden}/>}
         {view==="kanban"&&<KanbanView data={vData} save={save} auditLog={auditLog} user={user}/>}
@@ -1710,7 +1710,7 @@ function OverviewView({data,save,auditLog,user}){
 
 // ─── Projects ───────────────────────────
 function ProjectsView({data,save,auditLog,user,showHidden}){
-  const{projects,staff}=data;const sorted=[...projects].sort((a,b)=>a.priority-b.priority);
+  const projects=data.projects||[];const staff=data.staff||[];const sorted=[...projects].sort((a,b)=>a.priority-b.priority);
   const[expanded,setExpanded]=useState({});const[modal,setModal]=useState(null);
   const visibleSorted=showHidden?sorted:sorted.filter(p=>!p.hidden);
   const toggleHide=(pid,e)=>{e.stopPropagation();save({...data,projects:projects.map(p=>p.id===pid?{...p,hidden:!p.hidden}:p)});};
