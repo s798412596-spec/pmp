@@ -614,16 +614,21 @@ const Tabs = ({items, active, onChange}) => <div style={{display:"flex",gap:2,ba
 </div>;
 
 // ─── Sync Status Indicator ────────────────
-const SyncBadge = ({ status }) => {
+const SyncBadge = ({ status, onSync }) => {
   const map = {
     idle: { c: T.text3, l: "本地", icon: Circle },
     syncing: { c: T.warning, l: "同步中", icon: Loader2 },
     synced: { c: T.success, l: "已同步", icon: CheckCircle2 },
-    error: { c: T.danger, l: "离线", icon: AlertCircle },
+    error: { c: T.danger, l: "点击同步", icon: RefreshCw },
   };
+  const needsSync = status === "idle" || status === "error";
   const s = map[status] || map.idle;
   const Icon = s.icon;
-  return <div style={{display:"flex",alignItems:"center",gap:4,fontSize:10,color:s.c,fontWeight:600,padding:"3px 8px",borderRadius:10,background:s.c+"10"}}>
+  return <div
+    onClick={onSync && needsSync ? onSync : undefined}
+    title={onSync && needsSync ? "点击将本地数据同步到服务器" : undefined}
+    style={{display:"flex",alignItems:"center",gap:4,fontSize:10,color:s.c,fontWeight:600,padding:"3px 8px",borderRadius:10,background:s.c+"10",cursor:onSync&&needsSync?"pointer":"default",transition:T.transition}}
+  >
     <Icon size={10} style={status==="syncing"?{animation:"spin 1s linear infinite"}:{}}/> {s.l}
   </div>;
 };
@@ -1746,7 +1751,7 @@ function EmployeeApp({data,user,save,syncStatus,auditLog,taskInstancesHook,deliv
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <Avatar name={user.name} color={user.color||T.accent} size={32}/>
           <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:T.text1}}>{user.name}</div><div style={{fontSize:10,color:T.text3}}>{user.role}</div></div>
-          <SyncBadge status={syncStatus} />
+          <SyncBadge status={syncStatus} onSync={() => save(data)} />
           <button onClick={onLogout} title="退出登录" style={{background:T.borderLight,border:"none",width:28,height:28,borderRadius:14,cursor:"pointer",color:T.text3,display:"flex",alignItems:"center",justifyContent:"center",transition:T.transition,flexShrink:0}} onMouseEnter={e=>e.target.style.color=T.danger} onMouseLeave={e=>e.target.style.color=T.text3}><LogOut size={14}/></button>
         </div>
       </div>
@@ -1899,7 +1904,7 @@ function AdminApp({data,user,save,syncStatus,auditLog,taskInstancesHook,delivera
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <Avatar name={user.name} color={user.color||T.accent} size={32}/>
           <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:T.text1}}>{user.name}</div><div style={{fontSize:10,color:T.text3}}>{user.role} · 管理员</div></div>
-          <SyncBadge status={syncStatus} />
+          <SyncBadge status={syncStatus} onSync={() => save(data)} />
           <button onClick={onLogout} title="退出登录" style={{background:T.borderLight,border:"none",width:28,height:28,borderRadius:14,cursor:"pointer",color:T.text3,display:"flex",alignItems:"center",justifyContent:"center",transition:T.transition,flexShrink:0}} onMouseEnter={e=>e.target.style.color=T.danger} onMouseLeave={e=>e.target.style.color=T.text3}><LogOut size={14}/></button>
         </div>
       </div>
