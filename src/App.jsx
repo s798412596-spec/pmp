@@ -272,7 +272,7 @@ function useStorage() {
   const clientIdRef = useRef((() => {
     const KEY = "sm-client-id";
     let id = sessionStorage.getItem(KEY);
-    if (!id) { id = Math.random().toString(36).slice(2) + Date.now().toString(36); sessionStorage.setItem(KEY, id); }
+    if (!id) { id = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36); sessionStorage.setItem(KEY, id); }
     return id;
   })());
 
