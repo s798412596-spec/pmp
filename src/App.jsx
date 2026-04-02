@@ -872,9 +872,9 @@ function AIAssistant({data,save,auditLog,user}) {
   }, [projects]);
 
   const handleBulkHours = async () => {
-    if (zeroHoursActions.length === 0 || bulkHoursState === "loading") return;
+    if (zeroHoursActions.length === 0 || bulkHoursState?.loading) return;
     const batch = zeroHoursActions.slice(0, 30);
-    setBulkHoursState("loading");
+    setBulkHoursState({ loading: true, batchSize: batch.length });
     try {
       const aiConfig = JSON.parse(localStorage.getItem("sm-ai-config") || "{}");
       const provider = aiConfig.provider || "gemini";
@@ -897,7 +897,7 @@ function AIAssistant({data,save,auditLog,user}) {
   };
 
   const applyBulkHours = () => {
-    if (!bulkHoursState || bulkHoursState === "loading" || !bulkHoursState.ops?.length) return;
+    if (!bulkHoursState || bulkHoursState.loading || !bulkHoursState.ops?.length) return;
     applyOperations({ operations: bulkHoursState.ops });
     setBulkHoursState(null);
     setChatMessages(prev => [...prev, { role: "assistant", content: `已为 ${bulkHoursState.ops.length} 条任务填入工时！`, isSuccess: true }]);
@@ -1547,13 +1547,13 @@ ${catalog || "（暂无项目）"}
       </button>}
       {agentMode&&<button
         onClick={handleBulkHours}
-        disabled={zeroHoursActions.length===0||bulkHoursState==="loading"}
+        disabled={zeroHoursActions.length===0||!!bulkHoursState?.loading}
         title={zeroHoursActions.length===0?"所有任务已有工时记录":`批量填补 ${Math.min(zeroHoursActions.length,30)} 条工时为0的任务${zeroHoursActions.length>30?`（共${zeroHoursActions.length}条，本次前30条）`:""}`}
-        style={{display:"flex",alignItems:"center",gap:4,padding:"4px 10px",borderRadius:20,border:`1.5px solid ${zeroHoursActions.length===0?T.borderLight:"#10B981"}`,background:zeroHoursActions.length===0?T.borderLight:"#ECFDF5",color:zeroHoursActions.length===0?T.text3:"#059669",fontSize:11,fontWeight:600,cursor:zeroHoursActions.length===0?"default":"pointer",transition:T.transition,whiteSpace:"nowrap",opacity:bulkHoursState==="loading"?0.7:1}}
+        style={{display:"flex",alignItems:"center",gap:4,padding:"4px 10px",borderRadius:20,border:`1.5px solid ${zeroHoursActions.length===0?T.borderLight:"#10B981"}`,background:zeroHoursActions.length===0?T.borderLight:"#ECFDF5",color:zeroHoursActions.length===0?T.text3:"#059669",fontSize:11,fontWeight:600,cursor:zeroHoursActions.length===0?"default":"pointer",transition:T.transition,whiteSpace:"nowrap",opacity:bulkHoursState?.loading?0.7:1}}
       >
-        {bulkHoursState==="loading"?<Loader2 size={10} style={{animation:"spin 1s linear infinite"}}/>:<span style={{fontSize:11}}>📥</span>}
-        {bulkHoursState==="loading"?"分析中…":"批量填补"}
-        {zeroHoursActions.length>0&&bulkHoursState!=="loading"&&<span style={{background:"#059669",color:"#fff",borderRadius:8,fontSize:9,fontWeight:700,padding:"1px 5px",marginLeft:1}}>{Math.min(zeroHoursActions.length,30)}</span>}
+        {bulkHoursState?.loading?<Loader2 size={10} style={{animation:"spin 1s linear infinite"}}/>:<span style={{fontSize:11}}>⏱️</span>}
+        {bulkHoursState?.loading?`正在分析 ${bulkHoursState.batchSize} 条任务工时…`:"批量填补工时"}
+        {zeroHoursActions.length>0&&!bulkHoursState?.loading&&<span style={{background:"#059669",color:"#fff",borderRadius:8,fontSize:9,fontWeight:700,padding:"1px 5px",marginLeft:1}}>{Math.min(zeroHoursActions.length,30)}</span>}
       </button>}
       <Btn small v="ghost" onClick={()=>setShowAIConfig(true)} style={{color:T.text3}}><Settings size={14}/></Btn>
     </div>
@@ -1561,7 +1561,7 @@ ${catalog || "（暂无项目）"}
     <AIConfigPanel open={showAIConfig} onClose={()=>setShowAIConfig(false)} hoursAnalyst={hoursAnalyst} setHoursAnalyst={setHoursAnalyst} />
 
     {/* Bulk hours preview panel */}
-    {bulkHoursState&&bulkHoursState!=="loading"&&<div style={{margin:"0 16px 0",borderRadius:T.radiusSm,border:`1.5px solid #10B981`,background:"#F0FDF4",padding:"12px 16px",animation:"fadeIn 0.2s ease"}}>
+    {bulkHoursState&&!bulkHoursState.loading&&<div style={{margin:"0 16px 0",borderRadius:T.radiusSm,border:`1.5px solid #10B981`,background:"#F0FDF4",padding:"12px 16px",animation:"fadeIn 0.2s ease"}}>
       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
         <span style={{fontSize:13}}>📥</span>
         <span style={{fontSize:13,fontWeight:700,color:"#065F46",flex:1}}>{bulkHoursState.message}</span>
@@ -1596,7 +1596,7 @@ ${catalog || "（暂无项目）"}
         </div>
       </>}
     </div>}
-    {zeroHoursActions.length>30&&bulkHoursState===null&&agentMode&&<div style={{margin:"8px 16px 0",padding:"6px 12px",borderRadius:T.radiusSm,background:"#FFFBEB",border:`1px solid #FCD34D`,fontSize:11,color:"#92400E"}}>
+    {zeroHoursActions.length>30&&!bulkHoursState&&agentMode&&<div style={{margin:"8px 16px 0",padding:"6px 12px",borderRadius:T.radiusSm,background:"#FFFBEB",border:`1px solid #FCD34D`,fontSize:11,color:"#92400E"}}>
       ⚠️ 共 {zeroHoursActions.length} 条任务工时为0，点击「批量填补」每次分析前30条，可多次点击分批处理
     </div>}
 
