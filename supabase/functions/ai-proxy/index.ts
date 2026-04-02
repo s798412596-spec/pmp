@@ -1,8 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 const corsHeaders = {"Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type","Access-Control-Allow-Methods":"POST, OPTIONS"};
 const JSON_FORMAT = { type: "json_object" };
-const COMMANDER_TIMEOUT_MS = 15000; // 15s — fast path, fail quickly
-const ARCHITECT_TIMEOUT_MS = 55000; // 55s — main call, give it time
+const COMMANDER_TIMEOUT_MS = 12000; // 12s — fast path, fail quickly
+const ARCHITECT_TIMEOUT_MS = 42000; // 42s — fits within client's 65s budget even after commander
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -163,12 +163,12 @@ serve(async (req) => {
       }
 
       console.log("Architect stage...");
-      responseText = await callProvider(activeProvider, model, system, architectMsgs, 2);
+      responseText = await callProvider(activeProvider, model, system, architectMsgs, 1);
 
     } else {
       // Direct mode: single Architect call
       console.log(`Direct mode (msgLen=${userLastMsg.length})`);
-      responseText = await callProvider(activeProvider, model, system, messages, 2);
+      responseText = await callProvider(activeProvider, model, system, messages, 1);
     }
 
     if (!responseText) throw new Error(`${activeProvider.toUpperCase()} 连续返回空响应，请稍后重试或切换其他模型。`);

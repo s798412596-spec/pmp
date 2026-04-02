@@ -965,7 +965,7 @@ ${staffSummary}
     const body = {provider, model, system, messages, ...opts};
     let rawBody = "", resp;
     const controller = new AbortController();
-    const abortTimer = setTimeout(() => controller.abort(), 50000);
+    const abortTimer = setTimeout(() => controller.abort(), 65000);
     try {
       resp = await fetch(url, {
         method:"POST",
@@ -975,7 +975,7 @@ ${staffSummary}
       });
       rawBody = await resp.text();
     } catch(netErr) {
-      if (netErr.name === "AbortError") throw new Error("请求超时（50秒），请稍后重试或发送更简短的指令。");
+      if (netErr.name === "AbortError") throw new Error("请求超时（65秒），请稍后重试或发送更简短的指令。");
       throw new Error(`网络请求失败: ${netErr.message}`);
     } finally {
       clearTimeout(abortTimer);
