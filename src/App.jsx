@@ -779,6 +779,9 @@ function AIAssistant({data,save,auditLog,user}) {
   const [pendingOps,setPendingOps] = useState(null);
   const [chatHistory,setChatHistory] = useState(()=>{try{return JSON.parse(localStorage.getItem("sm-ai-history")||"[]");}catch{return[];}});
   const [showHistory,setShowHistory] = useState(false);
+  const [agentMode, setAgentMode] = useState(()=>{try{return JSON.parse(localStorage.getItem("sm-agent-mode")??"true");}catch{return true;}});
+  const [loadingStage, setLoadingStage] = useState("");
+  const isFollowUpRef = useRef(false);
   const chatEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const inputRef = useRef(null);
@@ -787,6 +790,8 @@ function AIAssistant({data,save,auditLog,user}) {
   useEffect(()=>{try{localStorage.setItem("sm-ai-chat",JSON.stringify(chatMessages));}catch{}},[chatMessages]);
   // Persist chat history
   useEffect(()=>{try{localStorage.setItem("sm-ai-history",JSON.stringify(chatHistory));}catch{}},[chatHistory]);
+  // Persist agent mode
+  useEffect(()=>{try{localStorage.setItem("sm-agent-mode",JSON.stringify(agentMode));}catch{}},[agentMode]);
   // Scroll chat container (not page)
   useEffect(()=>{if(chatContainerRef.current)chatContainerRef.current.scrollTop=chatContainerRef.current.scrollHeight;},[chatMessages,loading]);
 
@@ -905,117 +910,138 @@ ${staffSummary}
 - message 字段永远只写一两句中文自然语言（如"已找到滕丞的3个任务，请确认删除"），绝对不能把 operations 里的 JSON 结构放进 message 字段，message 只能是中文纯文字，绝对不能包含任何 JSON 代码`;
   };
 
+  // ── Commander prompt (lightweight, no project data) ──
+  const buildCommanderPrompt = () =>
+    `你是任务提取专家（总指挥），仅负责从用户输入中提取结构化任务信息，不做任何系统操作。
+输出纯JSON（不含markdown，不含任何解释）：
+{"condensed":"核心需求一句话（≤80字）","tasks":[{"action":"任务描述","person":"负责人姓名或空","platform":"平台名或空","deadline":"截止日期或空","freq":"频率daily/weekly/monthly或空","isRecurring":false,"note":"备注或空"}],"projectHint":"涉及的项目名称或空"}`;
+
+  // ── Shared JSON cleaner ──
+  const parseAIResponse = (raw) => {
+    if (!raw.trim()) throw new Error("AI 返回了空响应，可能输入内容过长，请缩短后重试。");
+    let cleaned = raw.replace(/```json\s*/g,"").replace(/```\s*/g,"").trim();
+    cleaned = cleaned.replace(/,\s*([}\]])/g,"$1").replace(/\/\/[^\n]*/g,"");
+    const m = cleaned.match(/\{[\s\S]*\}/);
+    if (m) cleaned = m[0];
+    try { return JSON.parse(cleaned); } catch(_) {
+      const fixed = cleaned.replace(/'/g,'"').replace(/([{,]\s*)(\w+)\s*:/g,'$1"$2":').replace(/,\s*([}\]])/g,"$1");
+      return JSON.parse(fixed);
+    }
+  };
+
+  // ── Shared Edge Function caller ──
+  const callEdgeFn = async (system, messages, provider, model, authToken) => {
+    const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-proxy`;
+    const resp = await fetch(url, {
+      method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":`Bearer ${authToken}`},
+      body: JSON.stringify({provider, model, system, messages})
+    });
+    const result = await resp.json();
+    if (result.error) throw new Error(result.error);
+    return result.text || "";
+  };
+
+  // ── Sanitize message field ──
+  const sanitizeMsg = (msg) => {
+    if (!msg) return "已解析完成";
+    return msg.split("\n").filter(line=>{
+      const t=line.trim();
+      if(!t)return true;
+      if(/^[{}\[\],\s]+$/.test(t))return false;
+      if(/^[{\[]/.test(t))return false;
+      if(/[{\[]$/.test(t))return false;
+      if(/^"?\w+"?\s*:/.test(t))return false;
+      if(/^[}\]],?\s*$/.test(t))return false;
+      return true;
+    }).join("\n").trim()||"已解析完成";
+  };
+
   const callAI = async (userText) => {
     if(!userText.trim())return;
     const newUserMsg = {role:"user",content:userText};
     const updatedChat = [...chatMessages, newUserMsg];
     setChatMessages(updatedChat);
-    setInput(""); setLoading(true);
+    setInput(""); setLoading(true); setLoadingStage("");
 
     try {
-      const aiConfig = JSON.parse(localStorage.getItem("sm-ai-config") || '{}');
-      const provider = aiConfig.provider || "gemini";
-      // Auto-correct invalid model names (e.g. leftover from old config)
-      const providerDef = AI_PROVIDERS.find(p => p.v === provider);
-      const validModels = providerDef?.models || [];
-      const savedModel = aiConfig.model || "";
-      const model = (validModels.length > 0 && savedModel && !validModels.includes(savedModel))
-        ? validModels[0]
-        : savedModel;
-      const EDGE_FN_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-proxy`;
+      const aiConfig = JSON.parse(localStorage.getItem("sm-ai-config")||'{}');
+      const provider = aiConfig.provider||"gemini";
+      const providerDef = AI_PROVIDERS.find(p=>p.v===provider);
+      const validModels = providerDef?.models||[];
+      const savedModel = aiConfig.model||"";
+      const model = (validModels.length>0&&savedModel&&!validModels.includes(savedModel))?validModels[0]:savedModel;
 
-      // Build messages array for multi-turn
-      const apiMessages = updatedChat.map(m => ({
-        role: m.role === "assistant" ? "assistant" : "user",
-        content: m.role === "assistant" ? (m.rawContent || m.content) : m.content
-      }));
-
-      // Use the current user's session JWT for auth (reject if no session)
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) throw new Error("请先登录后再使用AI助手");
+      const {data:{session}} = await supabase.auth.getSession();
+      if(!session?.access_token) throw new Error("请先登录后再使用AI助手");
       const authToken = session.access_token;
 
-      const resp = await fetch(EDGE_FN_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${authToken}`,
-        },
-        body: JSON.stringify({ provider, model, system: buildSystemPrompt(), messages: apiMessages })
-      });
-      const result = await resp.json();
-      if (result.error) throw new Error(result.error);
-      const raw = result.text || "";
-      if (!raw.trim()) throw new Error("AI 返回了空响应，可能是输入内容过长，请缩短后重试。");
-      // Clean up common AI response issues
-      let cleaned = raw.replace(/```json\s*/g,"").replace(/```\s*/g,"").trim();
-      // Fix single quotes → double quotes (common Gemini issue)
-      // Remove trailing commas before } or ]
-      cleaned = cleaned.replace(/,\s*([}\]])/g, "$1");
-      // Remove JS-style comments
-      cleaned = cleaned.replace(/\/\/[^\n]*/g, "");
-      // Try to extract JSON object if surrounded by extra text
-      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-      if (jsonMatch) cleaned = jsonMatch[0];
-      let parsed;
-      try {
-        parsed = JSON.parse(cleaned);
-      } catch (jsonErr) {
-        // Last resort: try fixing common issues
+      let architectMessages; // what the Architect receives
+
+      if(agentMode && !isFollowUpRef.current) {
+        // ── Stage 1: Commander — condense user's raw input ──
+        setLoadingStage("commander");
+        let commanderOut = null;
         try {
-          // Replace single-quoted keys/values with double quotes
-          const fixed = cleaned
-            .replace(/'/g, '"')
-            .replace(/([{,]\s*)(\w+)\s*:/g, '$1"$2":')  // unquoted keys
-            .replace(/,\s*([}\]])/g, "$1");
-          parsed = JSON.parse(fixed);
-        } catch (e2) {
-          // If still fails, show as plain error — never set needsMoreInfo/questions here
-          console.error("AI parse failed. Raw response:", raw.slice(0, 500));
-          const preview = raw.slice(0, 120).replace(/\n/g, " ");
-          setChatMessages([...updatedChat, {role:"assistant", content:`AI 返回的格式无法解析，请重试。\n\n原始内容片段：${preview}`, isError:true}]);
-          setLoading(false);
-          return;
+          const cRaw = await callEdgeFn(buildCommanderPrompt(), [{role:"user",content:userText}], provider, model, authToken);
+          commanderOut = parseAIResponse(cRaw);
+        } catch(e) {
+          commanderOut = null; // gracefully fall back to direct mode
         }
+
+        if(commanderOut?.condensed) {
+          // ── Stage 2 prep: Coordinator builds condensed context ──
+          const taskLines = (commanderOut.tasks||[]).map((t,i)=>
+            `${i+1}. ${t.action}${t.person?` | 负责人:${t.person}`:""}${t.platform?` | 平台:${t.platform}`:""}${t.deadline?` | 截止:${t.deadline}`:""}${t.freq?` | 频率:${t.freq}`:""}${t.note?` | 备注:${t.note}`:""}`
+          ).join("\n");
+          const condensedContext = `【总指挥整理的需求摘要】\n核心：${commanderOut.condensed}\n任务清单：\n${taskLines}${commanderOut.projectHint?`\n相关项目：${commanderOut.projectHint}`:""}`;
+          architectMessages = [{role:"user", content:condensedContext}];
+          setLoadingStage("architect");
+        } else {
+          // Commander failed: fall back to direct
+          architectMessages = updatedChat.map(m=>({role:m.role==="assistant"?"assistant":"user",content:m.role==="assistant"?(m.rawContent||m.content):m.content}));
+          setLoadingStage("architect");
+        }
+      } else {
+        // Direct mode or follow-up: full conversation history
+        setLoadingStage("architect");
+        architectMessages = updatedChat.map(m=>({role:m.role==="assistant"?"assistant":"user",content:m.role==="assistant"?(m.rawContent||m.content):m.content}));
       }
 
-      // Sanitize message: filter out JSON fragments that AI sometimes puts in message field
-      const sanitizeMsg = (msg) => {
-        if (!msg) return "已解析完成";
-        return msg.split("\n").filter(line => {
-          const t = line.trim();
-          if (!t) return true;
-          if (/^[{}\[\],\s]+$/.test(t)) return false;
-          if (/^[{\[]/.test(t)) return false;
-          if (/[{\[]$/.test(t)) return false;
-          if (/^"?\w+"?\s*:/.test(t)) return false;
-          if (/^[}\]],?\s*$/.test(t)) return false;
-          return true;
-        }).join("\n").trim() || "已解析完成";
-      };
+      // ── Architect call ──
+      const raw = await callEdgeFn(buildSystemPrompt(), architectMessages, provider, model, authToken);
+      let parsed;
+      try {
+        parsed = parseAIResponse(raw);
+      } catch(e2) {
+        console.error("AI parse failed. Raw response:", raw.slice(0,500));
+        const preview = raw.slice(0,120).replace(/\n/g," ");
+        setChatMessages([...updatedChat,{role:"assistant",content:`AI 返回的格式无法解析，请重试。\n\n原始内容片段：${preview}`,isError:true}]);
+        setLoading(false); setLoadingStage("");
+        return;
+      }
 
       const assistantMsg = {
-        role: "assistant",
+        role:"assistant",
         content: sanitizeMsg(parsed.message),
         rawContent: raw,
         parsed,
-        hasOps: (parsed.operations||[]).length > 0,
-        hasMilestones: (parsed.milestones||[]).length > 0,
-        hasRisks: (parsed.risks||[]).length > 0,
-        needsMoreInfo: parsed.needsMoreInfo,
-        questions: parsed.questions || [],
+        hasOps:(parsed.operations||[]).length>0,
+        hasMilestones:(parsed.milestones||[]).length>0,
+        hasRisks:(parsed.risks||[]).length>0,
+        needsMoreInfo:parsed.needsMoreInfo,
+        questions:parsed.questions||[],
       };
       setChatMessages([...updatedChat, assistantMsg]);
+      isFollowUpRef.current = !!parsed.needsMoreInfo;
+      if(assistantMsg.hasOps && !parsed.needsMoreInfo) setPendingOps(parsed);
 
-      // If has operations and doesn't need more info, set pending for confirmation
-      if(assistantMsg.hasOps && !parsed.needsMoreInfo) {
-        setPendingOps(parsed);
-      }
     } catch(e) {
       console.error("AI Error:", e);
-      setChatMessages([...updatedChat, {role:"assistant",content:`解析出错: ${e.message}。请重试或换一种描述方式。`,isError:true}]);
+      isFollowUpRef.current = false;
+      setChatMessages([...updatedChat,{role:"assistant",content:`解析出错: ${e.message}。请重试或换一种描述方式。`,isError:true}]);
     }
-    setLoading(false);
+    setLoading(false); setLoadingStage("");
     setTimeout(()=>inputRef.current?.focus(),100);
   };
 
@@ -1168,7 +1194,7 @@ ${staffSummary}
     const entry = { id: uid(), title, time: new Date().toISOString(), messages: chatMessages, count: chatMessages.length };
     setChatHistory(prev => [entry, ...prev].slice(0, 30));
   };
-  const resetChat = () => { saveCurrentToHistory(); setChatMessages([]); setPendingOps(null); setInput(""); };
+  const resetChat = () => { saveCurrentToHistory(); setChatMessages([]); setPendingOps(null); setInput(""); isFollowUpRef.current=false; };
   const loadHistory = (entry) => { saveCurrentToHistory(); setChatMessages(entry.messages||[]); setPendingOps(null); setShowHistory(false); };
   const deleteHistory = (id, e) => { e.stopPropagation(); setChatHistory(prev => prev.filter(h => h.id !== id)); };
   const clearAllHistory = () => { setChatHistory([]); };
@@ -1264,6 +1290,16 @@ ${staffSummary}
           </div>)}
         </div>}
       </div>
+      <button
+        onClick={()=>{ setAgentMode(v=>!v); isFollowUpRef.current=false; }}
+        title={agentMode?"当前：Agent工作流模式（点击切换为直接模式）":"当前：直接模式（点击切换为Agent工作流）"}
+        style={{display:"flex",alignItems:"center",gap:4,padding:"4px 10px",borderRadius:20,border:`1.5px solid ${agentMode?T.accent:T.border}`,background:agentMode?T.accentLight:"transparent",color:agentMode?T.accent:T.text3,fontSize:11,fontWeight:600,cursor:"pointer",transition:T.transition,whiteSpace:"nowrap"}}
+        onMouseEnter={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.color=T.accent;}}
+        onMouseLeave={e=>{e.currentTarget.style.borderColor=agentMode?T.accent:T.border;e.currentTarget.style.color=agentMode?T.accent:T.text3;}}
+      >
+        <span style={{width:6,height:6,borderRadius:"50%",background:agentMode?T.accent:T.text3,display:"inline-block"}}/>
+        {agentMode?"Agent模式":"直接模式"}
+      </button>
       <Btn small v="ghost" onClick={()=>setShowAIConfig(true)} style={{color:T.text3}}><Settings size={14}/></Btn>
     </div>
 
@@ -1317,11 +1353,11 @@ ${staffSummary}
       </div>)}
 
       {loading&&<div style={{display:"flex",gap:10,marginBottom:14}}>
-        <div style={{width:28,height:28,borderRadius:8,background:T.accentLight,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          <Loader2 size={14} color={T.accent} style={{animation:"spin 1s linear infinite"}}/>
+        <div style={{width:28,height:28,borderRadius:8,background:loadingStage==="commander"?"#FFF8EC":T.accentLight,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,border:loadingStage==="commander"?`1px solid ${T.warning}40`:"none"}}>
+          <Loader2 size={14} color={loadingStage==="commander"?T.warning:T.accent} style={{animation:"spin 1s linear infinite"}}/>
         </div>
         <div style={{padding:"10px 16px",background:T.borderLight,borderRadius:"4px 16px 16px 16px",fontSize:13,color:T.text3}}>
-          AI 正在分析...
+          {loadingStage==="commander"?"📋 总指挥整理需求中...":loadingStage==="architect"?"⚙️ 架构师处理中...":"AI 分析中..."}
         </div>
       </div>}
 
@@ -1359,7 +1395,7 @@ ${staffSummary}
       </div>
       <div style={{display:"flex",justifyContent:"space-between",marginTop:6}}>
         <span style={{fontSize:10,color:T.text3}}>Enter 发送 · Shift+Enter 换行</span>
-        <span style={{fontSize:10,color:T.text3}}>多轮对话模式 · AI 会主动追问缺失信息</span>
+        <span style={{fontSize:10,color:T.text3}}>{agentMode?"Agent工作流：总指挥→架构师 · 会议纪要友好":"直接模式 · AI 会主动追问缺失信息"}</span>
       </div>
     </div>
   </Card>;
