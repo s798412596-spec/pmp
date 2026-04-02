@@ -27,14 +27,14 @@ async function callWithRetry(fetcher: () => Promise<string>, maxAttempts = 3, la
   throw lastErr || new Error(`${label} 连续返回空响应（已重试${maxAttempts}次），请切换其他模型。`);
 }
 
-async function callLLM(activeProvider: string, model: string, system: string, messages: any[]): Promise<string> {
+async function callLLM(activeProvider: string, model: string, system: string, messages: any[], maxTokens = 6144): Promise<string> {
   if (activeProvider === "glm") {
     const apiKey = Deno.env.get("GLM_API_KEY");
     if (!apiKey) throw new Error("GLM_API_KEY not set");
     const resp = await fetch("https://open.bigmodel.cn/api/paas/v4/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-      body: JSON.stringify({ model: model || "GLM-5", max_tokens: 3072, messages: [{ role: "system", content: system }, ...messages] })
+      body: JSON.stringify({ model: model || "GLM-5", max_tokens: maxTokens, messages: [{ role: "system", content: system }, ...messages] })
     });
     if (!resp.ok) { const e = await resp.text(); throw new Error("GLM error " + resp.status + ": " + e); }
     const r = await resp.json();
@@ -46,7 +46,7 @@ async function callLLM(activeProvider: string, model: string, system: string, me
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: model || "claude-sonnet-4-6-20260217", max_tokens: 3072, system, messages })
+      body: JSON.stringify({ model: model || "claude-sonnet-4-6-20260217", max_tokens: maxTokens, system, messages })
     });
     if (!resp.ok) { const e = await resp.text(); throw new Error("Anthropic error " + resp.status + ": " + e); }
     const r = await resp.json();
@@ -58,7 +58,7 @@ async function callLLM(activeProvider: string, model: string, system: string, me
     const resp = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-      body: JSON.stringify({ model: model || "gpt-5.4", max_tokens: 3072, response_format: JSON_FORMAT, messages: [{ role: "system", content: system }, ...messages] })
+      body: JSON.stringify({ model: model || "gpt-5.4", max_tokens: maxTokens, response_format: JSON_FORMAT, messages: [{ role: "system", content: system }, ...messages] })
     });
     if (!resp.ok) { const e = await resp.text(); throw new Error("OpenAI error " + resp.status + ": " + e); }
     const r = await resp.json();
@@ -70,7 +70,7 @@ async function callLLM(activeProvider: string, model: string, system: string, me
     const resp = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-      body: JSON.stringify({ model: model || "gemini-3.1-pro-preview", max_tokens: 3072, messages: [{ role: "system", content: system }, ...messages] })
+      body: JSON.stringify({ model: model || "gemini-3.1-pro-preview", max_tokens: maxTokens, messages: [{ role: "system", content: system }, ...messages] })
     });
     if (!resp.ok) { const e = await resp.text(); throw new Error("Gemini error " + resp.status + ": " + e); }
     const r = await resp.json();
@@ -82,7 +82,7 @@ async function callLLM(activeProvider: string, model: string, system: string, me
     const resp = await fetch("https://api.deepseek.com/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-      body: JSON.stringify({ model: model || "deepseek-v3.2", max_tokens: 3072, response_format: JSON_FORMAT, messages: [{ role: "system", content: system }, ...messages] })
+      body: JSON.stringify({ model: model || "deepseek-v3.2", max_tokens: maxTokens, response_format: JSON_FORMAT, messages: [{ role: "system", content: system }, ...messages] })
     });
     if (!resp.ok) { const e = await resp.text(); throw new Error("DeepSeek error " + resp.status + ": " + e); }
     const r = await resp.json();
@@ -95,7 +95,7 @@ async function callLLM(activeProvider: string, model: string, system: string, me
     const resp = await fetch(baseUrl + "/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-      body: JSON.stringify({ model: model || "default", max_tokens: 3072, response_format: JSON_FORMAT, messages: [{ role: "system", content: system }, ...messages] })
+      body: JSON.stringify({ model: model || "default", max_tokens: maxTokens, response_format: JSON_FORMAT, messages: [{ role: "system", content: system }, ...messages] })
     });
     if (!resp.ok) { const e = await resp.text(); throw new Error("Custom LLM error " + resp.status + ": " + e); }
     const r = await resp.json();
@@ -106,8 +106,8 @@ async function callLLM(activeProvider: string, model: string, system: string, me
   }
 }
 
-async function callProvider(activeProvider: string, model: string, system: string, messages: any[], maxAttempts = 3, timeoutMs = ARCHITECT_TIMEOUT_MS): Promise<string> {
-  return callWithRetry(() => callLLM(activeProvider, model, system, messages), maxAttempts, activeProvider.toUpperCase(), timeoutMs);
+async function callProvider(activeProvider: string, model: string, system: string, messages: any[], maxAttempts = 3, timeoutMs = ARCHITECT_TIMEOUT_MS, maxTokens = 6144): Promise<string> {
+  return callWithRetry(() => callLLM(activeProvider, model, system, messages, maxTokens), maxAttempts, activeProvider.toUpperCase(), timeoutMs);
 }
 
 function tryParseJson(text: string): any | null {
@@ -139,7 +139,7 @@ serve(async (req) => {
       let condensed: any = null;
       try {
         console.log(`Commander stage: condensing ${userLastMsg.length} chars...`);
-        const cmdRaw = await callProvider(activeProvider, model, commanderSystem, [{ role: "user", content: userLastMsg }], 1, COMMANDER_TIMEOUT_MS);
+        const cmdRaw = await callProvider(activeProvider, model, commanderSystem, [{ role: "user", content: userLastMsg }], 1, COMMANDER_TIMEOUT_MS, 1024);
         condensed = tryParseJson(cmdRaw);
         if (!condensed?.condensed) { condensed = null; console.warn("Commander parse failed, falling back"); }
         else console.log("Commander OK:", condensed.condensed.slice(0, 60));

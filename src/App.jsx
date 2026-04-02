@@ -907,7 +907,8 @@ ${staffSummary}
 - 自动识别潜在风险（如同一人任务过多、截止日太紧、依赖链过长）
 - 当信息足够时 needsMoreInfo=false 并给出完整 operations
 - 当信息不够时 needsMoreInfo=true，operations 可以为空或给出部分（标注哪些字段留空待补）
-- message 字段永远只写一两句中文自然语言（如"已找到滕丞的3个任务，请确认删除"），绝对不能把 operations 里的 JSON 结构放进 message 字段，message 只能是中文纯文字，绝对不能包含任何 JSON 代码`;
+- message 字段永远只写一两句中文自然语言（如"已找到滕丞的3个任务，请确认删除"），绝对不能把 operations 里的 JSON 结构放进 message 字段，message 只能是中文纯文字，绝对不能包含任何 JSON 代码
+- 每次 operations 最多包含 5 个操作；若用户需求超过 5 个操作，先执行前 5 个并在 message 中告知"已完成第一批 X 项，请回复「继续」执行剩余 Y 项"，等待用户确认后继续`;
   };
 
   // ── Commander prompt (lightweight, no project data) ──
@@ -924,8 +925,15 @@ ${staffSummary}
     const m = cleaned.match(/\{[\s\S]*\}/);
     if (m) cleaned = m[0];
     try { return JSON.parse(cleaned); } catch(_) {
-      const fixed = cleaned.replace(/'/g,'"').replace(/([{,]\s*)(\w+)\s*:/g,'$1"$2":').replace(/,\s*([}\]])/g,"$1");
-      return JSON.parse(fixed);
+      try {
+        const fixed = cleaned.replace(/'/g,'"').replace(/([{,]\s*)(\w+)\s*:/g,'$1"$2":').replace(/,\s*([}\]])/g,"$1");
+        return JSON.parse(fixed);
+      } catch(__) {
+        if (!cleaned.trimEnd().endsWith("}")) {
+          throw new Error("AI 响应内容过长被截断，操作未执行。请将指令拆分为更小批次（如每次最多5个任务）后重试。");
+        }
+        throw new Error("格式无法解析");
+      }
     }
   };
 
