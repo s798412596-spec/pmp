@@ -828,6 +828,7 @@ function AIAssistant({data,save,auditLog,user}) {
   const [hoursAnalyst, setHoursAnalyst] = useState(()=>{try{return JSON.parse(localStorage.getItem("sm-hours-analyst")??"true");}catch{return true;}});
   const [loadingStage, setLoadingStage] = useState("");
   const [loadingElapsed, setLoadingElapsed] = useState(0);
+  const [bulkHoursState, setBulkHoursState] = useState(null);
   const isFollowUpRef = useRef(false);
   const chatEndRef = useRef(null);
   const chatContainerRef = useRef(null);
@@ -853,6 +854,54 @@ function AIAssistant({data,save,auditLog,user}) {
 
   const getStaffName = (sid) => staff.find(s=>s.id===sid)?.name || "未分配";
   const getProjectName = (pid) => projects.find(p=>p.id===pid)?.name || (pid === "__new__" ? "新项目" : "未知项目");
+
+  const zeroHoursActions = useMemo(() => {
+    const result = [];
+    for (const p of projects) {
+      for (const c of p.categories || []) {
+        for (const r of c.resources || []) {
+          for (const a of r.actions || []) {
+            if ((a.hours || 0) === 0) {
+              result.push({ actionName: a.name, actionId: a.id, projectId: p.id, categoryId: c.id, resourceId: r.id, projectName: p.name });
+            }
+          }
+        }
+      }
+    }
+    return result;
+  }, [projects]);
+
+  const handleBulkHours = async () => {
+    if (zeroHoursActions.length === 0 || bulkHoursState === "loading") return;
+    const batch = zeroHoursActions.slice(0, 30);
+    setBulkHoursState("loading");
+    try {
+      const aiConfig = JSON.parse(localStorage.getItem("sm-ai-config") || "{}");
+      const provider = aiConfig.provider || "gemini";
+      const provDef = AI_PROVIDERS.find(p => p.v === provider);
+      const savedModel = aiConfig.model || "";
+      const model = (provDef?.models?.length > 0 && savedModel && !provDef.models.includes(savedModel)) ? provDef.models[0] : savedModel;
+      const resp = await fetch(AI_EDGE_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${AI_ANON_KEY}` },
+        body: JSON.stringify({ provider, model, bulkHoursMode: true, actionsList: batch, hoursAnalystSystem: buildHoursAnalystPrompt() }),
+      });
+      const result = await resp.json();
+      if (result.error) throw new Error(result.error);
+      const parsed = typeof result.text === "string" ? JSON.parse(result.text) : result.text;
+      setBulkHoursState({ ops: parsed.operations || [], message: parsed.message || `已分析 ${batch.length} 条任务` });
+    } catch (e) {
+      setBulkHoursState(null);
+      setChatMessages(prev => [...prev, { role: "assistant", content: `批量工时分析失败：${e.message}`, isError: true }]);
+    }
+  };
+
+  const applyBulkHours = () => {
+    if (!bulkHoursState || bulkHoursState === "loading" || !bulkHoursState.ops?.length) return;
+    applyOperations({ operations: bulkHoursState.ops });
+    setBulkHoursState(null);
+    setChatMessages(prev => [...prev, { role: "assistant", content: `已为 ${bulkHoursState.ops.length} 条任务填入工时！`, isSuccess: true }]);
+  };
 
   const buildSystemPrompt = (lean = false) => {
     // lean=true  → L1+L2 only (agent mode: per-bucket L3/L4 injected server-side per bucket)
@@ -1496,10 +1545,60 @@ ${catalog || "（暂无项目）"}
         {hoursAnalyst?"工时分析":"工时分析"}
         <span style={{width:6,height:6,borderRadius:"50%",background:hoursAnalyst?"#D97706":T.text3,display:"inline-block"}}/>
       </button>}
+      {agentMode&&<button
+        onClick={handleBulkHours}
+        disabled={zeroHoursActions.length===0||bulkHoursState==="loading"}
+        title={zeroHoursActions.length===0?"所有任务已有工时记录":`批量填补 ${Math.min(zeroHoursActions.length,30)} 条工时为0的任务${zeroHoursActions.length>30?`（共${zeroHoursActions.length}条，本次前30条）`:""}`}
+        style={{display:"flex",alignItems:"center",gap:4,padding:"4px 10px",borderRadius:20,border:`1.5px solid ${zeroHoursActions.length===0?T.borderLight:"#10B981"}`,background:zeroHoursActions.length===0?T.borderLight:"#ECFDF5",color:zeroHoursActions.length===0?T.text3:"#059669",fontSize:11,fontWeight:600,cursor:zeroHoursActions.length===0?"default":"pointer",transition:T.transition,whiteSpace:"nowrap",opacity:bulkHoursState==="loading"?0.7:1}}
+      >
+        {bulkHoursState==="loading"?<Loader2 size={10} style={{animation:"spin 1s linear infinite"}}/>:<span style={{fontSize:11}}>📥</span>}
+        {bulkHoursState==="loading"?"分析中…":"批量填补"}
+        {zeroHoursActions.length>0&&bulkHoursState!=="loading"&&<span style={{background:"#059669",color:"#fff",borderRadius:8,fontSize:9,fontWeight:700,padding:"1px 5px",marginLeft:1}}>{Math.min(zeroHoursActions.length,30)}</span>}
+      </button>}
       <Btn small v="ghost" onClick={()=>setShowAIConfig(true)} style={{color:T.text3}}><Settings size={14}/></Btn>
     </div>
 
     <AIConfigPanel open={showAIConfig} onClose={()=>setShowAIConfig(false)} hoursAnalyst={hoursAnalyst} setHoursAnalyst={setHoursAnalyst} />
+
+    {/* Bulk hours preview panel */}
+    {bulkHoursState&&bulkHoursState!=="loading"&&<div style={{margin:"0 16px 0",borderRadius:T.radiusSm,border:`1.5px solid #10B981`,background:"#F0FDF4",padding:"12px 16px",animation:"fadeIn 0.2s ease"}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+        <span style={{fontSize:13}}>📥</span>
+        <span style={{fontSize:13,fontWeight:700,color:"#065F46",flex:1}}>{bulkHoursState.message}</span>
+        <button onClick={()=>setBulkHoursState(null)} style={{background:"none",border:"none",cursor:"pointer",color:T.text3,padding:2,display:"flex"}}><X size={14}/></button>
+      </div>
+      {bulkHoursState.ops.length===0&&<div style={{fontSize:12,color:T.text2,textAlign:"center",padding:"8px 0"}}>没有可填入的工时数据，请重试</div>}
+      {bulkHoursState.ops.length>0&&<>
+        <div style={{maxHeight:200,overflowY:"auto",marginBottom:10,borderRadius:6,border:`1px solid #A7F3D0`,background:"#fff"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+            <thead>
+              <tr style={{background:"#ECFDF5"}}>
+                <th style={{padding:"6px 10px",textAlign:"left",color:"#065F46",fontWeight:600,borderBottom:`1px solid #A7F3D0`}}>任务名称</th>
+                <th style={{padding:"6px 10px",textAlign:"left",color:"#065F46",fontWeight:600,borderBottom:`1px solid #A7F3D0`}}>所属项目</th>
+                <th style={{padding:"6px 8px",textAlign:"center",color:"#065F46",fontWeight:600,borderBottom:`1px solid #A7F3D0`,whiteSpace:"nowrap"}}>估算工时</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bulkHoursState.ops.map((op,i)=>{
+                const proj = projects.find(p=>p.id===op.projectId);
+                return <tr key={i} style={{borderBottom:i<bulkHoursState.ops.length-1?`1px solid #D1FAE5`:"none"}}>
+                  <td style={{padding:"5px 10px",color:T.text1}}>{op.actionName}</td>
+                  <td style={{padding:"5px 10px",color:T.text2,fontSize:11}}>{proj?.name||op.projectId}</td>
+                  <td style={{padding:"5px 8px",textAlign:"center",fontWeight:700,color:"#059669"}}>{op.updates?.hours}h</td>
+                </tr>;
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+          <Btn small v="secondary" onClick={()=>setBulkHoursState(null)}>取消</Btn>
+          <Btn small onClick={applyBulkHours} style={{background:"#059669",borderColor:"#059669"}}>全部应用 ({bulkHoursState.ops.length}条)</Btn>
+        </div>
+      </>}
+    </div>}
+    {zeroHoursActions.length>30&&bulkHoursState===null&&agentMode&&<div style={{margin:"8px 16px 0",padding:"6px 12px",borderRadius:T.radiusSm,background:"#FFFBEB",border:`1px solid #FCD34D`,fontSize:11,color:"#92400E"}}>
+      ⚠️ 共 {zeroHoursActions.length} 条任务工时为0，点击「批量填补」每次分析前30条，可多次点击分批处理
+    </div>}
 
     {/* Chat area */}
     <div ref={chatContainerRef} style={{maxHeight:480,overflowY:"auto",padding:"16px 24px"}}>

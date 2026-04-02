@@ -189,20 +189,66 @@ serve(async (req) => {
 
   try {
     // ── Request contract ──────────────────────────────────────────────────────
+    // Bulk hours mode (bulkHoursMode=true):
+    //   bulkHoursMode     — true: skip Commander/Architect, run Analyst only
+    //   actionsList       — [{actionName,actionId,projectId,categoryId,resourceId}]
+    //   hoursAnalystSystem — analyst system prompt
+    //   provider, model   — AI provider/model for analyst call
+    //
     // Agent mode (long input >400 chars):
     //   system          — lean L1+L2 system prompt (buildSystemPrompt(true) on client)
     //   messages        — trimmed chat history (last 8), assistant entries are plain text only
     //   commanderSystem — Commander's system prompt (outputs projectBuckets[])
     //   projectsData    — CANONICAL FIELD: full project array from client; server uses
     //                     buildProjectDetailBlock() to inject per-bucket L3/L4 detail
-    //                     (replaces the originally-spec'd singular `projectDetail` field;
-    //                      multi-bucket parallel execution requires all projects' data)
     //
     // Non-agent mode / short input / follow-up:
     //   system          — full L1+L2+L3+L4 prompt (buildSystemPrompt(false) on client)
     //   messages, provider, model only; no commanderSystem or projectsData sent
     // ─────────────────────────────────────────────────────────────────────────
-    const { system, messages, provider, model, agentMode, commanderSystem, projectsData, hoursAnalystSystem } = await req.json();
+    const { system, messages, provider, model, agentMode, commanderSystem, projectsData, hoursAnalystSystem, bulkHoursMode, actionsList } = await req.json();
+
+    // ── Bulk hours mode: skip Commander/Architect, run Analyst directly ───────
+    if (bulkHoursMode && Array.isArray(actionsList) && actionsList.length > 0 && hoursAnalystSystem) {
+      const bulkProvider = (provider || "gemini").toLowerCase();
+      const bulkModel = model || "";
+      const actionNames: string[] = actionsList.map((a: any) => a.actionName).filter(Boolean);
+      console.log(`BulkHours: analyzing ${actionNames.length} zero-hours actions...`);
+      const analystMsg = `请分析以下新媒体运营任务的难易度和工时（小时）：\n${actionNames.map((n: string, i: number) => `${i + 1}. ${n}`).join("\n")}`;
+      try {
+        const analystRaw = await withTimeout(
+          callLLM(bulkProvider, bulkModel, hoursAnalystSystem, [{ role: "user", content: analystMsg }], 2048),
+          ANALYST_TIMEOUT_MS * 2, // allow more time for large batch
+          "BulkAnalyst",
+        );
+        const analystParsed = tryParseJson(analystRaw);
+        if (!analystParsed?.hourUpdates?.length) {
+          return respond({ text: JSON.stringify({ operations: [], message: "工时分析未返回有效结果，请重试" }) });
+        }
+        const hoursMap = new Map<string, number>(
+          analystParsed.hourUpdates.filter((u: any) => u.hours > 0).map((u: any) => [u.actionName, u.hours as number])
+        );
+        const operations = actionsList
+          .filter((a: any) => hoursMap.has(a.actionName))
+          .map((a: any) => ({
+            type: "update_action",
+            projectId: a.projectId,
+            categoryId: a.categoryId,
+            resourceId: a.resourceId,
+            actionId: a.actionId,
+            actionName: a.actionName,
+            updates: { hours: hoursMap.get(a.actionName) },
+          }));
+        const message = `已分析 ${actionNames.length} 条任务，成功估算 ${operations.length} 条工时`;
+        console.log(`BulkHours OK: ${operations.length}/${actionNames.length} hours estimated`);
+        return respond({ text: JSON.stringify({ operations, message }) });
+      } catch (e: any) {
+        console.warn("BulkHours failed:", e.message);
+        return respond({ error: `批量工时分析失败：${e.message}` }, 500);
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     if (!system || !messages) return respond({ error: "Missing system or messages" }, 400);
 
     const activeProvider = (provider || "gemini").toLowerCase();
