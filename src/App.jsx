@@ -835,7 +835,12 @@ function AIAssistant({data,save,auditLog,user}) {
         return `  项目: "${p.name}" (id:${p.id})\n${cats}`;
       } else {
         const cats = (p.categories||[]).map(c => {
-          const ress = (c.resources||[]).map(r => `      资源: "${r.name}" (id:${r.id})`).join("\n");
+          const ress = (c.resources||[]).map(r => {
+            const acts = (r.actions||[]).map(a =>
+              `        动作: "${a.name}" (id:${a.id}) type:${a.aType||""}${a.freq?" freq:"+a.freq:""}${a.staffId?" 负责:"+a.staffId:""}`
+            ).join("\n");
+            return `      资源: "${r.name}" (id:${r.id})${acts ? "\n"+acts : ""}`;
+          }).join("\n");
           return `    类别: "${c.name}" (id:${c.id})\n${ress}`;
         }).join("\n");
         return `  项目: "${p.name}" (id:${p.id})\n${cats}`;
@@ -844,7 +849,7 @@ function AIAssistant({data,save,auditLog,user}) {
     const staffMapping = staff.map(s=>`${s.name}=${s.id}`).join(", ");
     const structNote = lean
       ? "（L1项目→L2类别概览；每个项目的资源/动作详情已在消息中单独注入）"
-      : "（L1项目→L2类别→L3资源）";
+      : "（L1项目→L2类别→L3资源→L4动作）";
 
     return `你是「第二座山集团新媒体运营管理系统」的AI项目助手，帮助项目经理将文字描述转化为结构化项目数据。
 
