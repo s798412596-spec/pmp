@@ -6,8 +6,8 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const COMMANDER_TIMEOUT_MS = 12000;
-const ARCHITECT_TIMEOUT_MS = 30000;
+const COMMANDER_TIMEOUT_MS = 10000;
+const ARCHITECT_TIMEOUT_MS = 25000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {

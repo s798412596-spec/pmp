@@ -726,7 +726,7 @@ function DeadlineAlerts({ actions, staff }) {
 const AI_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ||
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRpdmluaWZzdWNmZnN4eWl5eXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1MjgxNjksImV4cCI6MjA5MDEwNDE2OX0.VFqHzTvjN7wwo8ctwOfmL8-k7VJX93QeYDOzT8yLUuE";
 const AI_EDGE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-proxy`;
-const AI_CLIENT_TIMEOUT_MS = 55000;
+const AI_CLIENT_TIMEOUT_MS = 40000;
 
 // ═══════════════════════════════════════════
 // ─── AI CONFIG PANEL ─────────────────────
@@ -811,6 +811,7 @@ function AIAssistant({data,save,auditLog,user}) {
   const [showHistory,setShowHistory] = useState(false);
   const [agentMode, setAgentMode] = useState(()=>{try{return JSON.parse(localStorage.getItem("sm-agent-mode")??"true");}catch{return true;}});
   const [loadingStage, setLoadingStage] = useState("");
+  const [loadingElapsed, setLoadingElapsed] = useState(0);
   const isFollowUpRef = useRef(false);
   const chatEndRef = useRef(null);
   const chatContainerRef = useRef(null);
@@ -823,6 +824,13 @@ function AIAssistant({data,save,auditLog,user}) {
   useEffect(()=>{try{localStorage.setItem("sm-ai-history",JSON.stringify(chatHistory));}catch{}},[chatHistory]);
   // Persist agent mode
   useEffect(()=>{try{localStorage.setItem("sm-agent-mode",JSON.stringify(agentMode));}catch{}},[agentMode]);
+  // Elapsed timer: tick every second while loading to show the user progress
+  useEffect(() => {
+    if (!loading) { setLoadingElapsed(0); return; }
+    setLoadingElapsed(0);
+    const t = setInterval(() => setLoadingElapsed(s => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [loading]);
   // Scroll chat container (not page)
   useEffect(()=>{if(chatContainerRef.current)chatContainerRef.current.scrollTop=chatContainerRef.current.scrollHeight;},[chatMessages,loading]);
 
@@ -1395,7 +1403,10 @@ ${catalog || "（暂无项目）"}
           <Loader2 size={14} color={T.accent} style={{animation:"spin 1s linear infinite"}}/>
         </div>
         <div style={{padding:"10px 16px",background:T.borderLight,borderRadius:"4px 16px 16px 16px",fontSize:13,color:T.text3}}>
-          {loadingStage==="agent"?"📋 总指挥→⚙️ 架构师 处理中...":loadingStage==="architect"?"⚙️ 架构师处理中...":"AI 分析中..."}
+          <span>
+            {loadingStage==="agent"?"📋 总指挥→⚙️ 架构师 处理中":loadingStage==="architect"?"⚙️ 架构师处理中":"AI 分析中"}
+          </span>
+          <span style={{marginLeft:6,opacity:0.6,fontVariantNumeric:"tabular-nums"}}>({loadingElapsed}s)</span>
         </div>
       </div>}
 
