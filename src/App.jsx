@@ -1015,6 +1015,25 @@ ${catalog || "（暂无项目）"}
     setChatMessages(updatedChat);
     setInput(""); setLoading(true); setLoadingStage("");
 
+    // ── SAFETY NET ──────────────────────────────────────────────────────────
+    // Hard React-level timeout: forces loading=false after 42s even if the
+    // fetch AbortController fails silently (e.g. in proxied/sandboxed environments).
+    const SAFETY_MS = 42000;
+    let safetyFired = false;
+    const safetyTimer = setTimeout(() => {
+      safetyFired = true;
+      setLoading(false); setLoadingStage("");
+      setChatMessages(prev => {
+        const last = prev[prev.length - 1];
+        if (last && last.role !== "assistant") {
+          return [...prev, {role:"assistant", content:"请求超时（42秒），请稍后重试，或在AI设置中切换更快的模型", isError:true}];
+        }
+        return prev;
+      });
+      console.warn("[AI] Safety timer fired — fetch did not resolve/reject in 42s");
+    }, SAFETY_MS);
+    // ────────────────────────────────────────────────────────────────────────
+
     try {
       const aiConfig = JSON.parse(localStorage.getItem("sm-ai-config")||'{}');
       const provider = aiConfig.provider||"gemini";
@@ -1036,17 +1055,15 @@ ${catalog || "（暂无项目）"}
       // Agent mode: Commander → parallel Architects; Follow-up/direct: single Architect
       const useAgent = agentMode && !isFollowUpRef.current;
       setLoadingStage(useAgent ? "agent" : "architect");
-      // In agent mode: send all projects so server-side buildProjectDetailBlock() can inject
-      // L3/L4 detail per bucket regardless of how projects are named or abbreviated in input.
       // Only use lean (L1+L2) prompt when Commander will actually execute server-side.
-      // Server runs Commander only when: agentMode + commanderSystem present + input length > 400.
-      // Short-input agent-mode falls through to direct Architect — needs full L3+L4 detail.
       const COMMANDER_THRESHOLD = 400;
       const willUseCommander = useAgent && userText.length > COMMANDER_THRESHOLD;
       const callOpts = useAgent
         ? {agentMode:true, commanderSystem:buildCommanderPrompt(), projectsData:projects}
         : {};
       const raw = await callEdgeFn(buildSystemPrompt(!willUseCommander), historyMessages, provider, model, callOpts);
+
+      if (safetyFired) return; // safety timer already cleared the UI — don't overwrite
 
       let parsed;
       try {
@@ -1058,7 +1075,6 @@ ${catalog || "（暂无项目）"}
           content:`AI 返回的内容格式无法解析，请重试，或将指令拆分成更小批次`,
           isError:true,
         }]);
-        setLoading(false); setLoadingStage("");
         return;
       }
 
@@ -1077,12 +1093,16 @@ ${catalog || "（暂无项目）"}
       if(assistantMsg.hasOps && !parsed.needsMoreInfo) setPendingOps(parsed);
 
     } catch(e) {
-      console.error("AI Error:", e.message);
-      isFollowUpRef.current = false;
-      setChatMessages([...updatedChat, {role:"assistant", content: e.message, isError:true}]);
+      if (!safetyFired) {
+        console.error("AI Error:", e.message);
+        isFollowUpRef.current = false;
+        setChatMessages([...updatedChat, {role:"assistant", content: e.message, isError:true}]);
+      }
+    } finally {
+      clearTimeout(safetyTimer);
+      setLoading(false); setLoadingStage("");
+      setTimeout(()=>inputRef.current?.focus(), 100);
     }
-    setLoading(false); setLoadingStage("");
-    setTimeout(()=>inputRef.current?.focus(), 100);
   };
 
   const applyOperations = (parsed) => {
