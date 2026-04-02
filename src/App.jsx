@@ -930,18 +930,32 @@ ${staffSummary}
   };
 
   // ── Shared Edge Function caller ──
-  const callEdgeFn = async (system, messages, provider, model, authToken, opts = {}) => {
+  // Uses anon key (session token approach had JWT expiry issues causing silent failures)
+  const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRpdmluaWZzdWNmZnN4eWl5eXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1MjgxNjksImV4cCI6MjA5MDEwNDE2OX0.VFqHzTvjN7wwo8ctwOfmL8-k7VJX93QeYDOzT8yLUuE";
+  const callEdgeFn = async (system, messages, provider, model, _authToken, opts = {}) => {
     const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-proxy`;
     const body = {provider, model, system, messages, ...opts};
-    const resp = await fetch(url, {
-      method:"POST",
-      headers:{"Content-Type":"application/json","Authorization":`Bearer ${authToken}`},
-      body: JSON.stringify(body)
-    });
-    const result = await resp.json();
-    if (result.error) throw new Error(result.error);
+    let rawBody = "", resp;
+    try {
+      resp = await fetch(url, {
+        method:"POST",
+        headers:{"Content-Type":"application/json","Authorization":`Bearer ${ANON_KEY}`},
+        body: JSON.stringify(body)
+      });
+      rawBody = await resp.text();
+    } catch(netErr) {
+      throw new Error(`网络请求失败: ${netErr.message}`);
+    }
+    console.log(`[AI] status=${resp.status} len=${rawBody.length} preview=${rawBody.slice(0,200)}`);
+    let result;
+    try { result = JSON.parse(rawBody); } catch(_) {
+      throw new Error(`Edge Function 返回了非预期内容 (HTTP ${resp.status}): ${rawBody.slice(0,80)}`);
+    }
+    // Handle all error formats: {error:"..."}, {message:"..."}, {code:401,...}
+    const errMsg = result.error || result.message;
+    if (errMsg) throw new Error(`调用失败: ${errMsg}`);
     const text = result.text || "";
-    if (!text.trim()) throw new Error("AI 返回了空响应，请稍后重试或切换其他模型。");
+    if (!text.trim()) throw new Error(`AI 返回了空响应 (HTTP ${resp.status})，请稍后重试或切换模型。`);
     return text;
   };
 
