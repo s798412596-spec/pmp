@@ -3072,6 +3072,7 @@ function ScheduleView({data,save}){
   const{projects,staff,weekSchedules={}}=data;
   const[week,setWeek]=useState(()=>{const n=new Date(),s=new Date(n.getFullYear(),0,1),w=Math.ceil(((n-s)/864e5+s.getDay()+1)/7);return`${n.getFullYear()}-W${String(w).padStart(2,"0")}`;});
   const[showRef,setShowRef]=useState(true);
+  const[fillMsg,setFillMsg]=useState(null);
 
   const getH=(sid,pid,d)=>(weekSchedules[week]?.[sid]?.[`${pid}-${d}`])||0;
   const setH=(sid,pid,d,h)=>{const ns=JSON.parse(JSON.stringify(weekSchedules));if(!ns[week])ns[week]={};if(!ns[week][sid])ns[week][sid]={};ns[week][sid][`${pid}-${d}`]=Math.max(0,Math.min(8,+h||0));save({...data,weekSchedules:ns});};
@@ -3087,13 +3088,14 @@ function ScheduleView({data,save}){
     let t=0;
     const proj=projects.find(p=>p.id===pid);if(!proj)return 0;
     (proj.categories||[]).forEach(c=>(c.resources||[]).forEach(r=>(r.actions||[]).forEach(a=>{
-      if(a.staffId!==sid||!(a.hours>0))return;
-      const h=a.hours||0;
+      if(a.staffId!==sid)return;
+      const h=Number(a.hours)||0;if(h<=0)return;
       if(a.aType==='recurring'){
         if(a.freq==='daily')t+=h*5;
         else if(a.freq==='weekly')t+=h;
         else if(a.freq==='biweekly')t+=h*0.5;
         else if(a.freq==='monthly')t+=h*0.25;
+        else t+=h; // unknown freq: treat as weekly
       }else if(a.aType==='once'&&isInWeek(a.deadline)){t+=h;}
     })));
     return Math.round(t*10)/10;
@@ -3103,35 +3105,45 @@ function ScheduleView({data,save}){
   const autoFill=()=>{
     const ns=JSON.parse(JSON.stringify(weekSchedules));
     if(!ns[week])ns[week]={};
+    let filledCount=0,taskCount=0;
     staff.forEach(s=>{
       if(!ns[week][s.id])ns[week][s.id]={};
       projects.forEach(p=>{
         const dayH=[0,0,0,0,0,0,0];
-        const proj=projects.find(pp=>pp.id===p.id);if(!proj)return;
-        (proj.categories||[]).forEach(c=>(c.resources||[]).forEach(r=>(r.actions||[]).forEach(a=>{
-          if(a.staffId!==s.id||!(a.hours>0))return;
-          const h=a.hours||0;
-          if(a.aType==='recurring'){
+        (p.categories||[]).forEach(c=>(c.resources||[]).forEach(r=>(r.actions||[]).forEach(a=>{
+          if(a.staffId!==s.id)return;
+          const h=Number(a.hours)||0;if(h<=0)return;
+          taskCount++;
+          if(a.aType==='recurring'||(!a.aType&&a.freq)){
             if(a.freq==='daily'){for(let d=0;d<5;d++)dayH[d]+=h;}
             else if(a.freq==='weekly'){for(let d=0;d<5;d++)dayH[d]+=h/5;}
             else if(a.freq==='biweekly'){for(let d=0;d<5;d++)dayH[d]+=(h*0.5)/5;}
             else if(a.freq==='monthly'){for(let d=0;d<5;d++)dayH[d]+=(h*0.25)/5;}
-          }else if(a.aType==='once'&&a.deadline&&isInWeek(a.deadline)){
+            else{for(let d=0;d<5;d++)dayH[d]+=h/5;} // fallback
+          }else if(a.deadline&&isInWeek(a.deadline)){
             const dl=new Date(a.deadline),dow=dl.getDay();
             const di=dow>=1&&dow<=5?dow-1:4;
             dayH[di]+=h;
+          }else if(!a.deadline){
+            for(let d=0;d<5;d++)dayH[d]+=h/5; // no deadline, no freq → spread
           }
         })));
-        for(let d=0;d<7;d++){
+        for(let d=0;d<5;d++){
           const v=Math.min(8,Math.round(dayH[d]*2)/2);
-          ns[week][s.id][`${p.id}-${d}`]=v;
+          if(v>0){ns[week][s.id][`${p.id}-${d}`]=v;filledCount++;}
         }
       });
     });
     save({...data,weekSchedules:ns});
+    if(taskCount===0){
+      setFillMsg({type:"warn",text:"未找到含工时的任务。请先在项目中填写任务工时（可用 AI 批量填补）。"});
+    }else{
+      setFillMsg({type:"ok",text:`已根据 ${taskCount} 条任务工时自动填充本周排期，更新 ${filledCount} 个格子。`});
+    }
+    setTimeout(()=>setFillMsg(null),5000);
   };
 
-  const clearWeek=()=>{const ns=JSON.parse(JSON.stringify(weekSchedules));ns[week]={};save({...data,weekSchedules:ns});};
+  const clearWeek=()=>{const ns=JSON.parse(JSON.stringify(weekSchedules));ns[week]={};save({...data,weekSchedules:ns});setFillMsg(null);};
 
   return<div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:10}}>
@@ -3140,7 +3152,7 @@ function ScheduleView({data,save}){
         <button onClick={()=>setShowRef(v=>!v)} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 12px",borderRadius:20,border:`1.5px solid ${showRef?T.purple:T.border}`,background:showRef?"#F5F0FF":"transparent",color:showRef?T.purple:T.text3,fontSize:11,fontWeight:600,cursor:"pointer",transition:T.transition}}>
           <Target size={12}/>{showRef?"隐藏任务参考":"显示任务参考"}
         </button>
-        <Btn small onClick={autoFill} style={{background:"#059669",borderColor:"#059669"}} title="根据每位员工的任务工时和频率，自动计算并填入本周排期">
+        <Btn small v="success" onClick={autoFill} title="根据每位员工的任务工时和频率，自动计算并填入本周排期">
           <RefreshCw size={12}/> 从任务自动填充
         </Btn>
         <Btn small v="secondary" onClick={clearWeek} title="清空本周所有手动排期数据">清空本周</Btn>
@@ -3149,6 +3161,10 @@ function ScheduleView({data,save}){
       </div>
     </div>
 
+    {fillMsg&&<div style={{marginBottom:12,padding:"10px 16px",borderRadius:T.radiusSm,background:fillMsg.type==="ok"?"#ECFDF5":"#FFFBEB",border:`1px solid ${fillMsg.type==="ok"?"#A7F3D0":"#FCD34D"}`,fontSize:12,color:fillMsg.type==="ok"?"#065F46":"#92400E",display:"flex",alignItems:"center",gap:8}}>
+      {fillMsg.type==="ok"?<CheckCircle2 size={14}/>:<AlertCircle size={14}/>}
+      <span>{fillMsg.text}</span>
+    </div>}
     {showRef&&<div style={{marginBottom:16,padding:"10px 16px",borderRadius:T.radiusSm,background:"#F5F0FF",border:`1px solid #DDD6FE`,fontSize:11,color:"#5B21B6",display:"flex",alignItems:"center",gap:8}}>
       <Target size={13}/>
       <span><b>任务参考</b>列显示每位员工基于任务工时（小时/次 × 频率）估算的每周工时。点击「从任务自动填充」可一键将此数据写入排期。</span>
