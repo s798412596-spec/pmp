@@ -77,7 +77,7 @@ async function callLLM(
     const resp = await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-      body: JSON.stringify({ model: model || "Qwen3.6-Plus", max_tokens: maxTokens, messages: [{ role: "system", content: system }, ...messages] }),
+      body: JSON.stringify({ model: model || "qwen-plus", max_tokens: maxTokens, messages: [{ role: "system", content: system }, ...messages] }),
     });
     if (!resp.ok) { const e = await resp.text(); throw new Error("Qwen 调用失败 " + resp.status + ": " + e); }
     const r = await resp.json();
