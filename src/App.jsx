@@ -956,17 +956,17 @@ ${catalog || "（暂无项目）"}
   };
 
   // ── Edge Function caller (uses module-level AI_ANON_KEY / AI_EDGE_URL / AI_CLIENT_TIMEOUT_MS) ──
-  const callEdgeFn = async (system, messages, provider, model, opts = {}, accessToken = null) => {
+  // Always uses ANON_KEY for authorization — the edge function does not validate user JWTs.
+  // User login state is verified separately in callAI before this is called.
+  const callEdgeFn = async (system, messages, provider, model, opts = {}) => {
     const body = {provider, model, system, messages, ...opts};
     let rawBody = "", resp;
     const controller = new AbortController();
     const abortTimer = setTimeout(() => controller.abort(), AI_CLIENT_TIMEOUT_MS);
-    // Use the caller-supplied user token if available; fall back to anon key
-    const authHeader = accessToken ? `Bearer ${accessToken}` : `Bearer ${AI_ANON_KEY}`;
     try {
       resp = await fetch(AI_EDGE_URL, {
         method: "POST",
-        headers: {"Content-Type":"application/json","Authorization": authHeader},
+        headers: {"Content-Type":"application/json","Authorization":`Bearer ${AI_ANON_KEY}`},
         body: JSON.stringify(body),
         signal: controller.signal,
       });
@@ -983,17 +983,12 @@ ${catalog || "（暂无项目）"}
       throw new Error(`服务器返回了非预期内容 (HTTP ${resp.status}): ${rawBody.slice(0, 80)}`);
     }
     if (resp.status === 401 || resp.status === 403) {
-      const detail = result?.error || result?.message || "";
-      const isUserAuth = detail.toLowerCase().includes("jwt") || detail.toLowerCase().includes("invalid token") || detail.toLowerCase().includes("expired");
-      throw new Error(isUserAuth
-        ? "登录状态已过期，请重新登录后再试"
-        : `AI服务返回错误（${resp.status}）：请检查 Supabase Secrets 中 API 密钥是否正确配置`);
+      throw new Error(`AI服务返回错误（${resp.status}）：请检查 Supabase Secrets 中 API 密钥是否正确配置`);
     }
     const errMsg = result.error || (resp.status !== 200 ? (result.message || `HTTP ${resp.status}`) : null);
     if (errMsg) {
       if (errMsg.includes("未配置") || errMsg.includes("not set")) throw new Error(`API 密钥未配置：${errMsg}`);
       if (errMsg.includes("超时") || errMsg.includes("timed out")) throw new Error(`AI 响应超时：${errMsg}`);
-      // Always include HTTP status so the caller's error classifier can match reliably
       const prefix = resp.status !== 200 ? `AI服务返回错误（HTTP ${resp.status}）：` : "";
       throw new Error(`${prefix}${errMsg}`);
     }
@@ -1054,35 +1049,22 @@ ${catalog || "（暂无项目）"}
       const savedModel = aiConfig.model||"";
       const model = (validModels.length>0&&savedModel&&!validModels.includes(savedModel))?validModels[0]:savedModel;
 
-      // Retrieve a valid access token without risk of hanging.
-      // Strategy:
-      //   1. Read the cached session from localStorage (instant, no network).
-      //   2. If the token is still valid (expires >60s from now) → use it directly.
-      //   3. If expired/expiring → call supabase.auth.refreshSession() with a 5s
-      //      hard timeout so we never wait more than 5s even when Supabase is slow.
-      //   4. If refresh also fails/times out → throw a clear auth error.
-      // This replaces the old getSession() which could hang indefinitely on refresh.
-      let accessToken = null;
+      // Verify the user has an active session (capped at 5s to avoid hanging when
+      // Supabase is slow). The edge function itself uses ANON_KEY — this check is
+      // purely to confirm the user is logged in before dispatching the request.
+      let isLoggedIn = false;
       try {
-        const stored = JSON.parse(localStorage.getItem("sb-divinifsucffsxyiyypc-auth-token") || "null");
-        const rawToken   = stored?.access_token    || stored?.currentSession?.access_token    || null;
-        const expiresAt  = stored?.expires_at      || stored?.currentSession?.expires_at      || 0;
-        const refreshTok = stored?.refresh_token   || stored?.currentSession?.refresh_token   || null;
-        const nowSec     = Math.floor(Date.now() / 1000);
-
-        if (rawToken && (expiresAt - nowSec) > 60) {
-          // Token is valid for at least another 60 seconds — use without any network call
-          accessToken = rawToken;
-        } else if (refreshTok) {
-          // Token expired or expiring soon — refresh it, but cap at 5s to prevent hangs
-          const { data } = await Promise.race([
-            supabase.auth.refreshSession({ refresh_token: refreshTok }),
-            new Promise((_, reject) => setTimeout(() => reject(new Error("refresh_timeout")), 5000)),
-          ]);
-          accessToken = data?.session?.access_token || null;
-        }
-      } catch { /* malformed JSON or refresh timed out / failed */ }
-      if (!accessToken) throw new Error("__auth__:身份验证失败，请重新登录后再使用AI助手");
+        const authResult = await Promise.race([
+          supabase.auth.getSession(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("auth_timeout")), 5000)),
+        ]);
+        isLoggedIn = !!authResult?.data?.session?.access_token;
+      } catch (authErr) {
+        throw new Error(authErr.message === "auth_timeout"
+          ? "__auth__:身份验证超时（5秒），请刷新页面后重试"
+          : "__auth__:身份验证失败，请重新登录后再使用AI助手");
+      }
+      if (!isLoggedIn) throw new Error("__auth__:请先登录后再使用AI助手");
 
       // ── Stage 2: sending — brief preflight, force render ──────────────────────
       flushSync(() => setLoadingStage("sending"));
@@ -1107,7 +1089,24 @@ ${catalog || "（暂无项目）"}
       flushSync(() => setLoadingStage(useAgent ? "agent" : "architect"));
 
       // ── Fetch — user sees "⚙️ AI已接收，正在处理..." or "📋 总指挥协调中..." ──────
-      const raw = await callEdgeFn(buildSystemPrompt(!willUseCommander), historyMessages, provider, model, callOpts, accessToken);
+      // Auto-retry once on transient failures (network errors, timeouts, empty responses).
+      // Config errors (API key not set, auth) are not retried.
+      const isRetryable = (err) =>
+        !err.message.includes("请检查 Supabase Secrets") &&
+        !err.message.includes("API 密钥未配置") &&
+        !err.message.startsWith("__auth__");
+      let raw;
+      try {
+        raw = await callEdgeFn(buildSystemPrompt(!willUseCommander), historyMessages, provider, model, callOpts);
+      } catch (firstErr) {
+        if (isRetryable(firstErr)) {
+          console.warn("[AI] First attempt failed, retrying in 1.5s:", firstErr.message);
+          await new Promise(r => setTimeout(r, 1500));
+          raw = await callEdgeFn(buildSystemPrompt(!willUseCommander), historyMessages, provider, model, callOpts);
+        } else {
+          throw firstErr;
+        }
+      }
 
       if (safetyFired) return;
 
