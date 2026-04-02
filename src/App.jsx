@@ -1061,7 +1061,8 @@ ${catalog || "（暂无项目）"}
       let accessToken = null;
       try {
         const stored = JSON.parse(localStorage.getItem("sb-divinifsucffsxyiyypc-auth-token") || "null");
-        accessToken = stored?.access_token || null;
+        // Support both flat (v2) and nested (v1 legacy) token shapes
+        accessToken = stored?.access_token || stored?.currentSession?.access_token || null;
       } catch { /* malformed JSON in storage */ }
       if (!accessToken) throw new Error("__auth__:身份验证失败，请重新登录后再使用AI助手");
 
