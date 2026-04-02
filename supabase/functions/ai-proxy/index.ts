@@ -1,7 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 const corsHeaders = {"Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type","Access-Control-Allow-Methods":"POST, OPTIONS"};
 const JSON_FORMAT = { type: "json_object" };
-const CALL_TIMEOUT_MS = 25000; // 25 second per LLM call
+const COMMANDER_TIMEOUT_MS = 15000; // 15s — fast path, fail quickly
+const ARCHITECT_TIMEOUT_MS = 55000; // 55s — main call, give it time
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -10,11 +11,11 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
-async function callWithRetry(fetcher: () => Promise<string>, maxAttempts = 3, label = "API"): Promise<string> {
+async function callWithRetry(fetcher: () => Promise<string>, maxAttempts = 3, label = "API", timeoutMs = ARCHITECT_TIMEOUT_MS): Promise<string> {
   let lastErr: Error | null = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const text = await withTimeout(fetcher(), CALL_TIMEOUT_MS, label);
+      const text = await withTimeout(fetcher(), timeoutMs, label);
       if (text) return text;
       console.warn(`${label} returned empty (attempt ${attempt}/${maxAttempts})`);
     } catch (e: any) {
@@ -105,8 +106,8 @@ async function callLLM(activeProvider: string, model: string, system: string, me
   }
 }
 
-async function callProvider(activeProvider: string, model: string, system: string, messages: any[], maxAttempts = 3): Promise<string> {
-  return callWithRetry(() => callLLM(activeProvider, model, system, messages), maxAttempts, activeProvider.toUpperCase());
+async function callProvider(activeProvider: string, model: string, system: string, messages: any[], maxAttempts = 3, timeoutMs = ARCHITECT_TIMEOUT_MS): Promise<string> {
+  return callWithRetry(() => callLLM(activeProvider, model, system, messages), maxAttempts, activeProvider.toUpperCase(), timeoutMs);
 }
 
 function tryParseJson(text: string): any | null {
@@ -134,11 +135,11 @@ serve(async (req) => {
     const shouldUseCommander = agentMode && commanderSystem && userLastMsg.length > 200;
 
     if (shouldUseCommander) {
-      // ── Commander: ONE attempt, 25s timeout. Failure = graceful fallback ──
+      // ── Commander: ONE attempt, 15s timeout. Failure = graceful fallback ──
       let condensed: any = null;
       try {
         console.log(`Commander stage: condensing ${userLastMsg.length} chars...`);
-        const cmdRaw = await callProvider(activeProvider, model, commanderSystem, [{ role: "user", content: userLastMsg }], 1);
+        const cmdRaw = await callProvider(activeProvider, model, commanderSystem, [{ role: "user", content: userLastMsg }], 1, COMMANDER_TIMEOUT_MS);
         condensed = tryParseJson(cmdRaw);
         if (!condensed?.condensed) { condensed = null; console.warn("Commander parse failed, falling back"); }
         else console.log("Commander OK:", condensed.condensed.slice(0, 60));
