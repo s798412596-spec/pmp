@@ -827,12 +827,10 @@ function AIAssistant({data,save,auditLog,user}) {
   const getProjectName = (pid) => projects.find(p=>p.id===pid)?.name || (pid === "__new__" ? "新项目" : "未知项目");
 
   const buildSystemPrompt = () => {
-    // Lean prompt: L1→L2→L3 only (no L4 action details to keep token count low)
+    // Summary layer: L1+L2 only (no resources, no actions) — keeps token count minimal.
+    // Per-bucket resource/action detail is injected server-side via projectsData.
     const projSummary = projects.map(p => {
-      const cats = (p.categories||[]).map(c => {
-        const ress = (c.resources||[]).map(r => `      资源: "${r.name}" (id:${r.id})`).join("\n");
-        return `    类别: "${c.name}" (id:${c.id})\n${ress}`;
-      }).join("\n");
+      const cats = (p.categories||[]).map(c => `    类别: "${c.name}" (id:${c.id})`).join("\n");
       return `  项目: "${p.name}" (id:${p.id})\n${cats}`;
     }).join("\n");
     const staffMapping = staff.map(s=>`${s.name}=${s.id}`).join(", ");
@@ -845,7 +843,7 @@ function AIAssistant({data,save,auditLog,user}) {
 3. **主动追问**：信息不完整时追问缺失关键信息，每次最多3个问题
 4. **全面管理**：可创建、修改、删除各层级，所有变更经用户确认后执行
 
-## 当前项目结构（L1→L2→L3，动作层不在此列出）
+## 当前项目概览（L1项目→L2类别；资源和动作层详情已在消息中单独提供）
 ${projSummary}
 
 ## 人员（姓名=ID）
@@ -1001,10 +999,15 @@ ${staffMapping}
       // Agent mode: Commander → parallel Architects; Follow-up/direct: single Architect
       const useAgent = agentMode && !isFollowUpRef.current;
       setLoadingStage(useAgent ? "agent" : "architect");
-      // Send full projectsData in agent mode so server can inject per-bucket L4 detail
-      const callOpts = useAgent
-        ? {agentMode:true, commanderSystem:buildCommanderPrompt(), projectsData:projects}
-        : {};
+      // In agent mode: send per-bucket project detail for server-side L4 injection.
+      // Pre-filter to only projects whose name appears in the message (reduces payload);
+      // if none match by name, send all (Commander will resolve the mapping).
+      let callOpts = {};
+      if (useAgent) {
+        const mentionedProjects = projects.filter(p => userText.includes(p.name));
+        const projectsToSend = mentionedProjects.length > 0 ? mentionedProjects : projects;
+        callOpts = {agentMode:true, commanderSystem:buildCommanderPrompt(), projectsData:projectsToSend};
+      }
       const raw = await callEdgeFn(buildSystemPrompt(), historyMessages, provider, model, callOpts);
 
       let parsed;
