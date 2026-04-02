@@ -1065,7 +1065,7 @@ ${catalog || "（暂无项目）"}
       } catch { /* malformed JSON in storage */ }
       if (!accessToken) throw new Error("__auth__:身份验证失败，请重新登录后再使用AI助手");
 
-      // ── Stage 2: sending — force render so user sees transition to "connecting" ──
+      // ── Stage 2: sending — brief preflight, force render ──────────────────────
       flushSync(() => setLoadingStage("sending"));
 
       // Trim history: last 8 messages (4 rounds), send clean text for assistant messages
@@ -1083,14 +1083,14 @@ ${catalog || "（暂无项目）"}
         ? {agentMode:true, commanderSystem:buildCommanderPrompt(), projectsData:projects}
         : {};
 
-      // ── Fetch — user sees "📡 正在连接AI服务..." during the entire network wait ──
+      // ── Stage 3: agent/architect — force render BEFORE the fetch so this label is
+      //    visible for the entire network wait ("request dispatched, AI processing") ──
+      flushSync(() => setLoadingStage(useAgent ? "agent" : "architect"));
+
+      // ── Fetch — user sees "⚙️ AI已接收，正在处理..." or "📋 总指挥协调中..." ──────
       const raw = await callEdgeFn(buildSystemPrompt(!willUseCommander), historyMessages, provider, model, callOpts, accessToken);
 
       if (safetyFired) return;
-
-      // ── Stage 3: response received — force render so user sees "AI已接收" ────────
-      // This is the true "AI has responded" moment: raw data is back from the server.
-      flushSync(() => setLoadingStage(useAgent ? "agent" : "architect"));
 
       let parsed;
       try {
@@ -1131,7 +1131,7 @@ ${catalog || "（暂无项目）"}
           userMsg = "AI服务超时，请稍后重试，或在AI设置中切换更快的模型";
         } else if (userMsg.includes("401") || userMsg.includes("403")) {
           userMsg = "身份验证失败，请重新登录后再试";
-        } else if (userMsg.includes("网络") || userMsg.includes("Failed to fetch") || userMsg.includes("NetworkError")) {
+        } else if (userMsg.includes("Failed to fetch") || userMsg.includes("NetworkError")) {
           userMsg = `AI服务连接失败（网络错误）：${e.message}`;
         } else if (/\b[45]\d{2}\b/.test(userMsg)) {
           userMsg = `AI服务返回错误：${e.message}`;
