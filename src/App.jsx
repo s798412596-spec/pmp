@@ -269,6 +269,12 @@ function useStorage() {
   const [loading, setLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState("idle"); // idle | syncing | synced | error
   const channelRef = useRef(null);
+  const clientIdRef = useRef((() => {
+    const KEY = "sm-client-id";
+    let id = sessionStorage.getItem(KEY);
+    if (!id) { id = Math.random().toString(36).slice(2) + Date.now().toString(36); sessionStorage.setItem(KEY, id); }
+    return id;
+  })());
 
   // Load from Supabase, fallback to localStorage
   useEffect(() => {
@@ -326,18 +332,12 @@ function useStorage() {
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: TABLE, filter: 'id=eq.main' }, (payload) => {
         if (payload.new?.data) {
           const remote = { ...DEFAULT_DATA, ...payload.new.data };
-          // Conflict protection: only apply remote if it's newer than local
-          setData(prev => {
-            const localTs = prev?._savedAt || 0;
-            const remoteTs = remote._savedAt || 0;
-            if (remoteTs > localTs) {
-              localStorage.setItem(SK, JSON.stringify(remote));
-              setSyncStatus("synced");
-              return remote;
-            }
-            // Local is newer, keep it
-            return prev;
-          });
+          const isOwnEcho = remote._clientId && remote._clientId === clientIdRef.current;
+          if (isOwnEcho) return; // ignore our own save bouncing back
+          // Another user's update — apply unconditionally
+          setData(remote);
+          localStorage.setItem(SK, JSON.stringify(remote));
+          setSyncStatus("synced");
         }
       })
       .subscribe();
@@ -346,7 +346,7 @@ function useStorage() {
   }, []);
 
   const save = useCallback(async (d) => {
-    const withTs = { ...d, _savedAt: Date.now() };
+    const withTs = { ...d, _savedAt: Date.now(), _clientId: clientIdRef.current };
     setData(withTs);
     localStorage.setItem(SK, JSON.stringify(withTs));
     setSyncStatus("syncing");
