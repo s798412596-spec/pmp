@@ -803,11 +803,11 @@ function AIAssistant({data,save,auditLog,user}) {
       const cats = (p.categories||[]).map(c => {
         const ress = (c.resources||[]).map(r => {
           const acts = (r.actions||[]).map(a => `        动作: "${a.name}" (id:${a.id})`).join("\n");
-          return `      资源: "${r.name}" (id:${r.id}, type:${r.type}, platform:${r.platform||""}, owner:${r.owner})\n${acts}`;
+          return `      资源: "${r.name}" (id:${r.id})\n${acts}`;
         }).join("\n");
-        return `    类别: "${c.name}" (id:${c.id}, cat:${c.cat})\n${ress}`;
+        return `    类别: "${c.name}" (id:${c.id})\n${ress}`;
       }).join("\n");
-      return `  项目: "${p.name}" (id:${p.id}, priority:${p.priority})\n${cats}`;
+      return `  项目: "${p.name}" (id:${p.id})\n${cats}`;
     }).join("\n");
     const staffSummary = staff.map(s => `  ${s.name} (id:${s.id}, role:${s.role})`).join("\n");
 
