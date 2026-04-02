@@ -124,13 +124,15 @@ function tryParseJson(text: string): any | null {
 }
 
 // ── Hours Analyst helpers ────────────────────────────────────────────────────
-// Collect all action names from operations (add_action / add_project / add_resource / add_category).
+// Collect all action names from operations (add_action / add_project / add_resource / add_category / update_action).
 function collectActionNames(operations: any[]): string[] {
   const names: string[] = [];
   const addFromActions = (actions: any[]) => {
     for (const a of actions || []) { if (a.name) names.push(a.name); }
   };
   for (const op of operations || []) {
+    // update_action: the actionName field identifies the action being modified
+    if (op.type === "update_action" && op.actionName) { names.push(op.actionName); continue; }
     if (op.action) addFromActions([op.action]);
     if (op.actions) addFromActions(op.actions);
     for (const cat of op.categories || []) {
@@ -151,6 +153,11 @@ function applyHoursToOps(operations: any[], hourUpdates: Array<{ actionName: str
     }
   };
   for (const op of operations || []) {
+    // update_action: merge hours into the updates object so the client applies it
+    if (op.type === "update_action" && op.actionName && hoursMap.has(op.actionName)) {
+      op.updates = { ...(op.updates || {}), hours: hoursMap.get(op.actionName) };
+      continue;
+    }
     if (op.action) applyToActions([op.action]);
     if (op.actions) applyToActions(op.actions);
     for (const cat of op.categories || []) {

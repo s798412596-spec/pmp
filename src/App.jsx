@@ -742,7 +742,7 @@ const AI_PROVIDERS = [
   { v: "custom", l: "自定义 (OpenAI兼容)", models: [] },
 ];
 
-function AIConfigPanel({ open, onClose }) {
+function AIConfigPanel({ open, onClose, hoursAnalyst, setHoursAnalyst }) {
   const [config, setConfig] = useState(() => JSON.parse(localStorage.getItem("sm-ai-config") || '{"provider":"gemini","model":""}'));
   const provider = AI_PROVIDERS.find(p => p.v === config.provider) || AI_PROVIDERS[0];
 
@@ -790,6 +790,19 @@ function AIConfigPanel({ open, onClose }) {
         <code style={{ background: T.card, padding: "1px 6px", borderRadius: 4, fontSize: 10 }}>DEEPSEEK_API_KEY</code> — DeepSeek<br/>
         <code style={{ background: T.card, padding: "1px 6px", borderRadius: 4, fontSize: 10 }}>CUSTOM_LLM_API_KEY</code> + <code style={{ background: T.card, padding: "1px 6px", borderRadius: 4, fontSize: 10 }}>CUSTOM_LLM_BASE_URL</code> — 自定义
       </div>
+    </div>
+
+    <div style={{ marginTop: 12, padding: "12px 16px", background: T.borderLight, borderRadius: T.radiusSm, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: T.text1 }}>⏱️ 工时分析者</div>
+        <div style={{ fontSize: 11, color: T.text3, marginTop: 2 }}>Agent 模式下自动估算每个任务的合理工时</div>
+      </div>
+      <button
+        onClick={() => setHoursAnalyst && setHoursAnalyst(v => !v)}
+        style={{ width: 42, height: 24, borderRadius: 12, border: "none", cursor: "pointer", background: hoursAnalyst ? "#F59E0B" : T.border, position: "relative", transition: "background 0.2s", flexShrink: 0 }}
+      >
+        <span style={{ position: "absolute", top: 3, left: hoursAnalyst ? 21 : 3, width: 18, height: 18, borderRadius: "50%", background: "#fff", transition: "left 0.2s", display: "block" }}/>
+      </button>
     </div>
 
     <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
@@ -1148,6 +1161,14 @@ ${catalog || "（暂无项目）"}
 
       if (safetyFired) return;
 
+      // ── Brief "analyst" stage display ── (server ran analyst inside the fetch;
+      //    show the label for 600ms so the user sees the stage before we finalize)
+      if (useAgent && hoursAnalyst) {
+        flushSync(() => setLoadingStage("analyst"));
+        await new Promise(r => setTimeout(r, 600));
+      }
+      if (safetyFired) return;
+
       let parsed;
       try {
         parsed = parseAIResponse(raw);
@@ -1478,7 +1499,7 @@ ${catalog || "（暂无项目）"}
       <Btn small v="ghost" onClick={()=>setShowAIConfig(true)} style={{color:T.text3}}><Settings size={14}/></Btn>
     </div>
 
-    <AIConfigPanel open={showAIConfig} onClose={()=>setShowAIConfig(false)} />
+    <AIConfigPanel open={showAIConfig} onClose={()=>setShowAIConfig(false)} hoursAnalyst={hoursAnalyst} setHoursAnalyst={setHoursAnalyst} />
 
     {/* Chat area */}
     <div ref={chatContainerRef} style={{maxHeight:480,overflowY:"auto",padding:"16px 24px"}}>
