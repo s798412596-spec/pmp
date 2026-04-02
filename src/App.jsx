@@ -945,6 +945,7 @@ ${staffMapping}
     try { result = JSON.parse(rawBody); } catch(_) {
       throw new Error(`服务器返回了非预期内容 (HTTP ${resp.status}): ${rawBody.slice(0, 80)}`);
     }
+    if (resp.status === 401 || resp.status === 403) throw new Error("API 鉴权失败，请检查对应服务商的密钥是否已在 Supabase Secrets 中正确配置");
     const errMsg = result.error || (resp.status !== 200 ? result.message : null);
     if (errMsg) {
       if (errMsg.includes("未配置") || errMsg.includes("not set")) throw new Error(`API 密钥未配置：${errMsg}`);
@@ -999,15 +1000,11 @@ ${staffMapping}
       // Agent mode: Commander → parallel Architects; Follow-up/direct: single Architect
       const useAgent = agentMode && !isFollowUpRef.current;
       setLoadingStage(useAgent ? "agent" : "architect");
-      // In agent mode: send per-bucket project detail for server-side L4 injection.
-      // Pre-filter to only projects whose name appears in the message (reduces payload);
-      // if none match by name, send all (Commander will resolve the mapping).
-      let callOpts = {};
-      if (useAgent) {
-        const mentionedProjects = projects.filter(p => userText.includes(p.name));
-        const projectsToSend = mentionedProjects.length > 0 ? mentionedProjects : projects;
-        callOpts = {agentMode:true, commanderSystem:buildCommanderPrompt(), projectsData:projectsToSend};
-      }
+      // In agent mode: send all projects so server-side buildProjectDetailBlock() can inject
+      // L3/L4 detail per bucket regardless of how projects are named or abbreviated in input.
+      const callOpts = useAgent
+        ? {agentMode:true, commanderSystem:buildCommanderPrompt(), projectsData:projects}
+        : {};
       const raw = await callEdgeFn(buildSystemPrompt(), historyMessages, provider, model, callOpts);
 
       let parsed;
