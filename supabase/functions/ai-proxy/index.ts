@@ -110,18 +110,34 @@ function tryParseJson(text: string): any | null {
   } catch { return null; }
 }
 
+// Build the project-detail supplement for one bucket's Architect call.
+// Returns a string block showing full L1→L2→L3→L4 for the target project.
+function buildProjectDetailBlock(project: any): string {
+  if (!project) return "";
+  const cats = (project.categories || []).map((c: any) => {
+    const ress = (c.resources || []).map((r: any) => {
+      const acts = (r.actions || []).map((a: any) => `          动作: "${a.name}" (id:${a.id})`).join("\n");
+      return `        资源: "${r.name}" (id:${r.id})${acts ? `\n${acts}` : ""}`;
+    }).join("\n");
+    return `      类别: "${c.name}" (id:${c.id})${ress ? `\n${ress}` : ""}`;
+  }).join("\n");
+  return `    项目: "${project.name}" (id:${project.id})${cats ? `\n${cats}` : ""}`;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   const respond = (body: object, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   try {
-    const { system, messages, provider, model, agentMode, commanderSystem } = await req.json();
+    // projectsData: full project objects from client (used to inject L4 detail per bucket)
+    const { system, messages, provider, model, agentMode, commanderSystem, projectsData } = await req.json();
     if (!system || !messages) return respond({ error: "Missing system or messages" }, 400);
 
     const activeProvider = (provider || "gemini").toLowerCase();
     const userLastMsg = messages[messages.length - 1]?.content || "";
-    console.log(`AI call: provider=${activeProvider}, model=${model || "(default)"}, agentMode=${!!agentMode}, msgLen=${userLastMsg.length}`);
+    const projects: any[] = Array.isArray(projectsData) ? projectsData : [];
+    console.log(`AI call: provider=${activeProvider}, model=${model || "(default)"}, agentMode=${!!agentMode}, msgLen=${userLastMsg.length}, projects=${projects.length}`);
 
     // Only invoke Commander for genuinely long inputs (>400 chars) in agent mode
     const shouldUseCommander = agentMode && commanderSystem && userLastMsg.length > 400;
@@ -159,48 +175,77 @@ serve(async (req) => {
 
         console.log(`Architect: launching ${buckets.length} parallel calls...`);
 
-        const architectResults = await Promise.all(
+        // Run all Architects in parallel; capture result or error per bucket
+        const bucketOutcomes = await Promise.all(
           buckets.map(async (bucket: any, idx: number) => {
-            const taskLines = (bucket.tasks || []).map((t: any, i: number) =>
-              `${i + 1}. ${t.action}${t.person ? ` | 负责人:${t.person}` : ""}${t.platform ? ` | 平台:${t.platform}` : ""}${t.deadline ? ` | 截止:${t.deadline}` : ""}${t.freq ? ` | 频率:${t.freq}` : ""}${t.note ? ` | 备注:${t.note}` : ""}`
-            ).join("\n");
-
-            const bucketCore = bucket.condensed || condensed.condensed;
-            const ctx = `【总指挥整理的需求摘要】\n核心：${bucketCore}\n任务清单：\n${taskLines}${bucket.projectName ? `\n相关项目：${bucket.projectName}` : ""}`;
-
+            const label = `Architect-${idx + 1}`;
             try {
+              const taskLines = (bucket.tasks || []).map((t: any, i: number) =>
+                `${i + 1}. ${t.action}${t.person ? ` | 负责人:${t.person}` : ""}${t.platform ? ` | 平台:${t.platform}` : ""}${t.deadline ? ` | 截止:${t.deadline}` : ""}${t.freq ? ` | 频率:${t.freq}` : ""}${t.note ? ` | 备注:${t.note}` : ""}`
+              ).join("\n");
+
+              const bucketCore = bucket.condensed || condensed.condensed;
+
+              // Two-layer context: bucket summary + full project detail for this bucket's project
+              const matchedProject = projects.find(
+                (p: any) => (bucket.projectId && p.id === bucket.projectId) || (bucket.projectName && p.name === bucket.projectName)
+              );
+              const projectDetailStr = matchedProject
+                ? `\n【当前项目完整结构（含动作层，供修改/删除操作参考）】\n${buildProjectDetailBlock(matchedProject)}`
+                : "";
+
+              const ctx = `【总指挥整理的需求摘要】\n核心：${bucketCore}\n任务清单：\n${taskLines}${bucket.projectName ? `\n相关项目：${bucket.projectName}` : ""}${projectDetailStr}`;
+
               const raw = await withTimeout(
                 callLLM(activeProvider, model, system, [{ role: "user", content: ctx }], 4096),
                 ARCHITECT_TIMEOUT_MS,
-                `Architect-${idx + 1}`,
+                label,
               );
-              console.log(`Architect-${idx + 1} done (${raw.length} chars)`);
-              return tryParseJson(raw);
+              const parsed = tryParseJson(raw);
+              if (!parsed) throw new Error(`${label} 返回内容无法解析为 JSON`);
+              console.log(`${label} OK (${raw.length} chars)`);
+              return { ok: true, result: parsed };
             } catch (e: any) {
-              console.warn(`Architect-${idx + 1} failed:`, e.message);
-              return null;
+              console.warn(`${label} failed:`, e.message);
+              return { ok: false, error: e.message, bucketName: bucket.projectName || `项目${idx + 1}` };
             }
           })
         );
 
-        // Merge all bucket results into one response
-        const merged: any = { operations: [], milestones: [], risks: [], needsMoreInfo: false, questions: [] };
-        const messages: string[] = [];
+        // Check for failures
+        const failed = bucketOutcomes.filter(o => !o.ok);
+        const succeeded = bucketOutcomes.filter(o => o.ok);
 
-        for (const result of architectResults) {
-          if (!result) continue;
-          merged.operations.push(...(result.operations || []));
-          merged.milestones.push(...(result.milestones || []));
-          merged.risks.push(...(result.risks || []));
-          if (result.needsMoreInfo) merged.needsMoreInfo = true;
-          if (result.questions?.length) merged.questions.push(...result.questions);
-          if (result.message) messages.push(result.message);
+        if (succeeded.length === 0) {
+          // All buckets failed — surface the first error explicitly
+          const firstErr = failed[0]?.error || "所有项目板块处理失败，请稍后重试";
+          throw new Error(firstErr);
         }
 
-        if (buckets.length > 1) {
-          merged.message = `已处理 ${buckets.length} 个项目板块：${messages.join("；")}`;
+        // Merge successful results; report partial failures in message
+        const merged: any = { operations: [], milestones: [], risks: [], needsMoreInfo: false, questions: [] };
+        const msgParts: string[] = [];
+
+        for (const outcome of bucketOutcomes) {
+          if (!outcome.ok) {
+            msgParts.push(`「${outcome.bucketName}」处理失败：${outcome.error}`);
+            continue;
+          }
+          const r = outcome.result;
+          merged.operations.push(...(r.operations || []));
+          merged.milestones.push(...(r.milestones || []));
+          merged.risks.push(...(r.risks || []));
+          if (r.needsMoreInfo) merged.needsMoreInfo = true;
+          if (r.questions?.length) merged.questions.push(...r.questions);
+          if (r.message) msgParts.push(r.message);
+        }
+
+        if (failed.length > 0) {
+          merged.message = `已处理 ${succeeded.length}/${buckets.length} 个项目，${failed.length} 个失败：${failed.map(f => f.bucketName).join("、")}`;
+        } else if (buckets.length > 1) {
+          merged.message = `已处理 ${buckets.length} 个项目：${msgParts.join("；")}`;
         } else {
-          merged.message = messages[0] || "已解析完成";
+          merged.message = msgParts[0] || "已解析完成";
         }
 
         responseText = JSON.stringify(merged);

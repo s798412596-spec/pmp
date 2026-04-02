@@ -1001,7 +1001,10 @@ ${staffMapping}
       // Agent mode: Commander → parallel Architects; Follow-up/direct: single Architect
       const useAgent = agentMode && !isFollowUpRef.current;
       setLoadingStage(useAgent ? "agent" : "architect");
-      const callOpts = useAgent ? {agentMode:true, commanderSystem:buildCommanderPrompt()} : {};
+      // Send full projectsData in agent mode so server can inject per-bucket L4 detail
+      const callOpts = useAgent
+        ? {agentMode:true, commanderSystem:buildCommanderPrompt(), projectsData:projects}
+        : {};
       const raw = await callEdgeFn(buildSystemPrompt(), historyMessages, provider, model, callOpts);
 
       let parsed;
