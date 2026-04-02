@@ -1027,10 +1027,15 @@ ${catalog || "（暂无项目）"}
       setLoadingStage(useAgent ? "agent" : "architect");
       // In agent mode: send all projects so server-side buildProjectDetailBlock() can inject
       // L3/L4 detail per bucket regardless of how projects are named or abbreviated in input.
+      // Only use lean (L1+L2) prompt when Commander will actually execute server-side.
+      // Server runs Commander only when: agentMode + commanderSystem present + input length > 400.
+      // Short-input agent-mode falls through to direct Architect — needs full L3+L4 detail.
+      const COMMANDER_THRESHOLD = 400;
+      const willUseCommander = useAgent && userText.length > COMMANDER_THRESHOLD;
       const callOpts = useAgent
         ? {agentMode:true, commanderSystem:buildCommanderPrompt(), projectsData:projects}
         : {};
-      const raw = await callEdgeFn(buildSystemPrompt(useAgent), historyMessages, provider, model, callOpts);
+      const raw = await callEdgeFn(buildSystemPrompt(!willUseCommander), historyMessages, provider, model, callOpts);
 
       let parsed;
       try {
