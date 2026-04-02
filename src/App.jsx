@@ -812,6 +812,7 @@ function AIAssistant({data,save,auditLog,user}) {
   const [chatHistory,setChatHistory] = useState(()=>{try{return JSON.parse(localStorage.getItem("sm-ai-history")||"[]");}catch{return[];}});
   const [showHistory,setShowHistory] = useState(false);
   const [agentMode, setAgentMode] = useState(()=>{try{return JSON.parse(localStorage.getItem("sm-agent-mode")??"true");}catch{return true;}});
+  const [hoursAnalyst, setHoursAnalyst] = useState(()=>{try{return JSON.parse(localStorage.getItem("sm-hours-analyst")??"true");}catch{return true;}});
   const [loadingStage, setLoadingStage] = useState("");
   const [loadingElapsed, setLoadingElapsed] = useState(0);
   const isFollowUpRef = useRef(false);
@@ -826,6 +827,7 @@ function AIAssistant({data,save,auditLog,user}) {
   useEffect(()=>{try{localStorage.setItem("sm-ai-history",JSON.stringify(chatHistory));}catch{}},[chatHistory]);
   // Persist agent mode
   useEffect(()=>{try{localStorage.setItem("sm-agent-mode",JSON.stringify(agentMode));}catch{}},[agentMode]);
+  useEffect(()=>{try{localStorage.setItem("sm-hours-analyst",JSON.stringify(hoursAnalyst));}catch{}},[hoursAnalyst]);
   // Elapsed timer: tick every second while loading to show the user progress
   useEffect(() => {
     if (!loading) { setLoadingElapsed(0); return; }
@@ -907,6 +909,37 @@ ${staffMapping}
 - 自动建议里程碑和识别风险（人员过载、截止太紧等）
 - message 只写中文纯文字（禁止把JSON结构放入message）
 - 每次 operations 最多5个；超出时先做前5个并告知"请回复「继续」执行剩余X项"`;
+  };
+
+  // ── Hours Analyst prompt: estimates realistic work hours per action based on SM ops knowledge ──
+  const buildHoursAnalystPrompt = () => {
+    return `你是新媒体运营「工时分析者」，根据任务名称分析难易度并估算合理工时（小时）。
+
+## 新媒体运营工时参考知识库
+- 短视频拍摄+剪辑（抖音/快手/视频号）：3-5小时/条
+- 小红书图文笔记（含选题/配图/发布）：1-2小时/篇
+- 直播场次（从准备到收场）：2-4小时/场
+- 直播脚本及互动话术撰写：3-5小时
+- 活动/节日营销策划方案：4-8小时
+- 线下商业拍摄（产品/空间/人物）：6-10小时
+- 大众点评/美团评价日常回复：0.5-1小时/天
+- 微信社群日常推送（节日祝福/优惠信息）：0.5小时/次
+- 美团/饿了么套餐或产品上架：1-2小时
+- 数据分析与运营报告：2-4小时
+- 微信公众号/小红书长文章：2-3小时/篇
+- 话题策划与创意设计：2-4小时
+- 社交账号日常运营（评论互动/粉丝维护）：1小时/天
+- 广告投放设置与优化：1-2小时/次
+- 会员/私域活动组织：3-6小时
+
+## 规则
+- 只分析能合理推断工时的任务；无法判断时 hours 填 0
+- hours 精确到 0.5，单次任务上限 20 小时
+- difficulty: "easy"（≤1h）/ "medium"（1.5-5h）/ "hard"（>5h）
+- actionName 必须与输入任务名称完全一致（原样复制）
+
+## 输出（纯JSON，禁用markdown）
+{"hourUpdates":[{"actionName":"原样任务名","hours":0,"difficulty":"easy/medium/hard","reasoning":"一句话理由"}]}`;
   };
 
   // ── Commander prompt: extracts tasks and splits into project buckets for parallel execution ──
@@ -1082,7 +1115,7 @@ ${catalog || "（暂无项目）"}
       const COMMANDER_THRESHOLD = 400;
       const willUseCommander = useAgent && userText.length > COMMANDER_THRESHOLD;
       const callOpts = useAgent
-        ? {agentMode:true, commanderSystem:buildCommanderPrompt(), projectsData:projects}
+        ? {agentMode:true, commanderSystem:buildCommanderPrompt(), projectsData:projects, ...(hoursAnalyst ? {hoursAnalystSystem:buildHoursAnalystPrompt()} : {})}
         : {};
 
       // ── Stage 3: agent/architect — force render BEFORE the fetch so this label is
@@ -1431,6 +1464,17 @@ ${catalog || "（暂无项目）"}
         <span style={{width:6,height:6,borderRadius:"50%",background:agentMode?T.accent:T.text3,display:"inline-block"}}/>
         {agentMode?"Agent模式":"直接模式"}
       </button>
+      {agentMode&&<button
+        onClick={()=>setHoursAnalyst(v=>!v)}
+        title={hoursAnalyst?"工时分析者已开启（AI自动估算每个任务工时，点击关闭）":"工时分析者已关闭（点击开启，AI将自动估算任务工时）"}
+        style={{display:"flex",alignItems:"center",gap:4,padding:"4px 10px",borderRadius:20,border:`1.5px solid ${hoursAnalyst?"#F59E0B":T.border}`,background:hoursAnalyst?"#FFFBEB":"transparent",color:hoursAnalyst?"#D97706":T.text3,fontSize:11,fontWeight:600,cursor:"pointer",transition:T.transition,whiteSpace:"nowrap"}}
+        onMouseEnter={e=>{e.currentTarget.style.borderColor="#F59E0B";e.currentTarget.style.color="#D97706";}}
+        onMouseLeave={e=>{e.currentTarget.style.borderColor=hoursAnalyst?"#F59E0B":T.border;e.currentTarget.style.color=hoursAnalyst?"#D97706":T.text3;}}
+      >
+        <span style={{fontSize:12}}>⏱️</span>
+        {hoursAnalyst?"工时分析":"工时分析"}
+        <span style={{width:6,height:6,borderRadius:"50%",background:hoursAnalyst?"#D97706":T.text3,display:"inline-block"}}/>
+      </button>}
       <Btn small v="ghost" onClick={()=>setShowAIConfig(true)} style={{color:T.text3}}><Settings size={14}/></Btn>
     </div>
 
@@ -1493,6 +1537,7 @@ ${catalog || "（暂无项目）"}
             :loadingStage==="sending"  ? "📡 正在连接AI服务..."
             :loadingStage==="agent"    ? "📋 总指挥协调中，AI处理中..."
             :loadingStage==="architect"? "⚙️ AI已接收，正在处理..."
+            :loadingStage==="analyst"  ? "⏱️ 工时分析者正在评估..."
             :                           "AI 分析中"}
           </span>
           <span style={{marginLeft:6,opacity:0.6,fontVariantNumeric:"tabular-nums"}}>({loadingElapsed}s)</span>

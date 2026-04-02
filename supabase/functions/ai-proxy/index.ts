@@ -8,6 +8,7 @@ const corsHeaders = {
 
 const COMMANDER_TIMEOUT_MS = 10000;
 const ARCHITECT_TIMEOUT_MS = 45000;
+const ANALYST_TIMEOUT_MS = 20000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -122,6 +123,44 @@ function tryParseJson(text: string): any | null {
   } catch { return null; }
 }
 
+// ── Hours Analyst helpers ────────────────────────────────────────────────────
+// Collect all action names from operations (add_action / add_project / add_resource / add_category).
+function collectActionNames(operations: any[]): string[] {
+  const names: string[] = [];
+  const addFromActions = (actions: any[]) => {
+    for (const a of actions || []) { if (a.name) names.push(a.name); }
+  };
+  for (const op of operations || []) {
+    if (op.action) addFromActions([op.action]);
+    if (op.actions) addFromActions(op.actions);
+    for (const cat of op.categories || []) {
+      for (const res of cat.resources || []) { addFromActions(res.actions || []); }
+    }
+    for (const res of op.resources || []) { addFromActions(res.actions || []); }
+  }
+  return names;
+}
+
+// Apply hourUpdates (by actionName match) back into operations in-place.
+function applyHoursToOps(operations: any[], hourUpdates: Array<{ actionName: string; hours: number }>): void {
+  const hoursMap = new Map(hourUpdates.filter(u => u.hours > 0).map(u => [u.actionName, u.hours]));
+  if (hoursMap.size === 0) return;
+  const applyToActions = (actions: any[]) => {
+    for (const a of actions || []) {
+      if (a.name && hoursMap.has(a.name)) a.hours = hoursMap.get(a.name);
+    }
+  };
+  for (const op of operations || []) {
+    if (op.action) applyToActions([op.action]);
+    if (op.actions) applyToActions(op.actions);
+    for (const cat of op.categories || []) {
+      for (const res of cat.resources || []) { applyToActions(res.actions || []); }
+    }
+    for (const res of op.resources || []) { applyToActions(res.actions || []); }
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 // Build the project-detail supplement for one bucket's Architect call.
 // Returns a string block showing full L1→L2→L3→L4 for the target project.
 function buildProjectDetailBlock(project: any): string {
@@ -156,7 +195,7 @@ serve(async (req) => {
     //   system          — full L1+L2+L3+L4 prompt (buildSystemPrompt(false) on client)
     //   messages, provider, model only; no commanderSystem or projectsData sent
     // ─────────────────────────────────────────────────────────────────────────
-    const { system, messages, provider, model, agentMode, commanderSystem, projectsData } = await req.json();
+    const { system, messages, provider, model, agentMode, commanderSystem, projectsData, hoursAnalystSystem } = await req.json();
     if (!system || !messages) return respond({ error: "Missing system or messages" }, 400);
 
     const activeProvider = (provider || "gemini").toLowerCase();
@@ -310,6 +349,36 @@ serve(async (req) => {
     }
 
     if (!responseText?.trim()) throw new Error(`${activeProvider.toUpperCase()} 返回了空响应，请稍后重试或切换其他模型`);
+
+    // ── Stage 3: Hours Analyst (optional, non-fatal) ─────────────────────────
+    // Runs only when client sends hoursAnalystSystem and there are action-creating operations.
+    if (hoursAnalystSystem) {
+      try {
+        const parsedResponse = tryParseJson(responseText);
+        if (parsedResponse?.operations?.length > 0) {
+          const actionNames = collectActionNames(parsedResponse.operations);
+          if (actionNames.length > 0) {
+            console.log(`Analyst: analyzing ${actionNames.length} actions...`);
+            const analystMsg = `请分析以下新媒体运营任务的难易度和工时（小时）：\n${actionNames.map((n, i) => `${i + 1}. ${n}`).join("\n")}`;
+            const analystRaw = await withTimeout(
+              callLLM(activeProvider, model, hoursAnalystSystem, [{ role: "user", content: analystMsg }], 1024),
+              ANALYST_TIMEOUT_MS,
+              "Analyst",
+            );
+            const analystParsed = tryParseJson(analystRaw);
+            if (analystParsed?.hourUpdates?.length > 0) {
+              applyHoursToOps(parsedResponse.operations, analystParsed.hourUpdates);
+              responseText = JSON.stringify(parsedResponse);
+              console.log(`Analyst OK: applied hours to ${analystParsed.hourUpdates.filter((u: any) => u.hours > 0).length} actions`);
+            }
+          }
+        }
+      } catch (e: any) {
+        console.warn("Analyst failed (non-fatal):", e.message);
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     console.log(`Response: ${responseText.length} chars`);
     return respond({ text: responseText });
 
