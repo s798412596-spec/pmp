@@ -34,7 +34,7 @@ async function callLLM(activeProvider: string, model: string, system: string, me
     const resp = await fetch("https://open.bigmodel.cn/api/paas/v4/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-      body: JSON.stringify({ model: model || "GLM-5", max_tokens: 8192, messages: [{ role: "system", content: system }, ...messages] })
+      body: JSON.stringify({ model: model || "GLM-5", max_tokens: 3072, messages: [{ role: "system", content: system }, ...messages] })
     });
     if (!resp.ok) { const e = await resp.text(); throw new Error("GLM error " + resp.status + ": " + e); }
     const r = await resp.json();
@@ -46,7 +46,7 @@ async function callLLM(activeProvider: string, model: string, system: string, me
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: model || "claude-sonnet-4-6-20260217", max_tokens: 8192, system, messages })
+      body: JSON.stringify({ model: model || "claude-sonnet-4-6-20260217", max_tokens: 3072, system, messages })
     });
     if (!resp.ok) { const e = await resp.text(); throw new Error("Anthropic error " + resp.status + ": " + e); }
     const r = await resp.json();
@@ -58,7 +58,7 @@ async function callLLM(activeProvider: string, model: string, system: string, me
     const resp = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-      body: JSON.stringify({ model: model || "gpt-5.4", max_tokens: 8192, response_format: JSON_FORMAT, messages: [{ role: "system", content: system }, ...messages] })
+      body: JSON.stringify({ model: model || "gpt-5.4", max_tokens: 3072, response_format: JSON_FORMAT, messages: [{ role: "system", content: system }, ...messages] })
     });
     if (!resp.ok) { const e = await resp.text(); throw new Error("OpenAI error " + resp.status + ": " + e); }
     const r = await resp.json();
@@ -70,7 +70,7 @@ async function callLLM(activeProvider: string, model: string, system: string, me
     const resp = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-      body: JSON.stringify({ model: model || "gemini-3.1-pro-preview", max_tokens: 8192, messages: [{ role: "system", content: system }, ...messages] })
+      body: JSON.stringify({ model: model || "gemini-3.1-pro-preview", max_tokens: 3072, messages: [{ role: "system", content: system }, ...messages] })
     });
     if (!resp.ok) { const e = await resp.text(); throw new Error("Gemini error " + resp.status + ": " + e); }
     const r = await resp.json();
@@ -82,7 +82,7 @@ async function callLLM(activeProvider: string, model: string, system: string, me
     const resp = await fetch("https://api.deepseek.com/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-      body: JSON.stringify({ model: model || "deepseek-v3.2", max_tokens: 8192, response_format: JSON_FORMAT, messages: [{ role: "system", content: system }, ...messages] })
+      body: JSON.stringify({ model: model || "deepseek-v3.2", max_tokens: 3072, response_format: JSON_FORMAT, messages: [{ role: "system", content: system }, ...messages] })
     });
     if (!resp.ok) { const e = await resp.text(); throw new Error("DeepSeek error " + resp.status + ": " + e); }
     const r = await resp.json();
@@ -95,7 +95,7 @@ async function callLLM(activeProvider: string, model: string, system: string, me
     const resp = await fetch(baseUrl + "/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-      body: JSON.stringify({ model: model || "default", max_tokens: 8192, response_format: JSON_FORMAT, messages: [{ role: "system", content: system }, ...messages] })
+      body: JSON.stringify({ model: model || "default", max_tokens: 3072, response_format: JSON_FORMAT, messages: [{ role: "system", content: system }, ...messages] })
     });
     if (!resp.ok) { const e = await resp.text(); throw new Error("Custom LLM error " + resp.status + ": " + e); }
     const r = await resp.json();
@@ -163,12 +163,12 @@ serve(async (req) => {
       }
 
       console.log("Architect stage...");
-      responseText = await callProvider(activeProvider, model, system, architectMsgs, 3);
+      responseText = await callProvider(activeProvider, model, system, architectMsgs, 2);
 
     } else {
       // Direct mode: single Architect call
       console.log(`Direct mode (msgLen=${userLastMsg.length})`);
-      responseText = await callProvider(activeProvider, model, system, messages, 3);
+      responseText = await callProvider(activeProvider, model, system, messages, 2);
     }
 
     if (!responseText) throw new Error(`${activeProvider.toUpperCase()} 连续返回空响应，请稍后重试或切换其他模型。`);

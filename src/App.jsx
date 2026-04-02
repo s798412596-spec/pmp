@@ -802,7 +802,7 @@ function AIAssistant({data,save,auditLog,user}) {
     const projSummary = projects.map(p => {
       const cats = (p.categories||[]).map(c => {
         const ress = (c.resources||[]).map(r => {
-          const acts = (r.actions||[]).map(a => `        动作: "${a.name}" (id:${a.id}, staffId:${a.staffId||""}, deadline:${a.deadline||""}, aType:${a.aType||""}, freq:${a.freq||""}, progress:${a.progress||0})`).join("\n");
+          const acts = (r.actions||[]).map(a => `        动作: "${a.name}" (id:${a.id})`).join("\n");
           return `      资源: "${r.name}" (id:${r.id}, type:${r.type}, platform:${r.platform||""}, owner:${r.owner})\n${acts}`;
         }).join("\n");
         return `    类别: "${c.name}" (id:${c.id}, cat:${c.cat})\n${ress}`;
@@ -936,15 +936,21 @@ ${staffSummary}
     const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-proxy`;
     const body = {provider, model, system, messages, ...opts};
     let rawBody = "", resp;
+    const controller = new AbortController();
+    const abortTimer = setTimeout(() => controller.abort(), 50000);
     try {
       resp = await fetch(url, {
         method:"POST",
         headers:{"Content-Type":"application/json","Authorization":`Bearer ${ANON_KEY}`},
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal: controller.signal
       });
       rawBody = await resp.text();
     } catch(netErr) {
+      if (netErr.name === "AbortError") throw new Error("请求超时（50秒），请稍后重试或发送更简短的指令。");
       throw new Error(`网络请求失败: ${netErr.message}`);
+    } finally {
+      clearTimeout(abortTimer);
     }
     console.log(`[AI] status=${resp.status} len=${rawBody.length} preview=${rawBody.slice(0,200)}`);
     let result;
