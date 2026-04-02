@@ -130,7 +130,15 @@ serve(async (req) => {
     new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   try {
-    // projectsData: full project objects from client (used to inject L4 detail per bucket)
+    // Request contract (agent mode):
+    //   system         — lean L1+L2 system prompt built by buildSystemPrompt(true)
+    //   messages       — trimmed chat history (last 8), assistant entries are plain text
+    //   commanderSystem — Commander's system prompt (outputs projectBuckets[])
+    //   projectsData   — full project array from client; server uses buildProjectDetailBlock()
+    //                    to inject matched project's L3/L4 detail into each bucket's message
+    // Non-agent mode:
+    //   system         — full L1+L2+L3+L4 prompt built by buildSystemPrompt(false)
+    //   messages, provider, model only; no commanderSystem or projectsData
     const { system, messages, provider, model, agentMode, commanderSystem, projectsData } = await req.json();
     if (!system || !messages) return respond({ error: "Missing system or messages" }, 400);
 
@@ -241,6 +249,7 @@ serve(async (req) => {
         }
 
         if (failed.length > 0) {
+          merged.failedBuckets = failed.map(f => ({ name: f.bucketName, error: f.error }));
           merged.message = `已处理 ${succeeded.length}/${buckets.length} 个项目，${failed.length} 个失败：${failed.map(f => f.bucketName).join("、")}`;
         } else if (buckets.length > 1) {
           merged.message = `已处理 ${buckets.length} 个项目：${msgParts.join("；")}`;
