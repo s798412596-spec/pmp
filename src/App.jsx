@@ -719,6 +719,14 @@ function DeadlineAlerts({ actions, staff }) {
 }
 
 // ═══════════════════════════════════════════
+// ─── AI CONSTANTS (module-level) ─────────
+// ═══════════════════════════════════════════
+const AI_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRpdmluaWZzdWNmZnN4eWl5eXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1MjgxNjksImV4cCI6MjA5MDEwNDE2OX0.VFqHzTvjN7wwo8ctwOfmL8-k7VJX93QeYDOzT8yLUuE";
+const AI_EDGE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-proxy`;
+const AI_CLIENT_TIMEOUT_MS = 55000;
+
+// ═══════════════════════════════════════════
 // ─── AI CONFIG PANEL ─────────────────────
 // ═══════════════════════════════════════════
 const AI_PROVIDERS = [
@@ -819,123 +827,80 @@ function AIAssistant({data,save,auditLog,user}) {
   const getProjectName = (pid) => projects.find(p=>p.id===pid)?.name || (pid === "__new__" ? "新项目" : "未知项目");
 
   const buildSystemPrompt = () => {
+    // Lean prompt: L1→L2→L3 only (no L4 action details to keep token count low)
     const projSummary = projects.map(p => {
       const cats = (p.categories||[]).map(c => {
-        const ress = (c.resources||[]).map(r => {
-          const acts = (r.actions||[]).map(a => `        动作: "${a.name}" (id:${a.id})`).join("\n");
-          return `      资源: "${r.name}" (id:${r.id})\n${acts}`;
-        }).join("\n");
+        const ress = (c.resources||[]).map(r => `      资源: "${r.name}" (id:${r.id})`).join("\n");
         return `    类别: "${c.name}" (id:${c.id})\n${ress}`;
       }).join("\n");
       return `  项目: "${p.name}" (id:${p.id})\n${cats}`;
     }).join("\n");
-    const staffSummary = staff.map(s => `  ${s.name} (id:${s.id}, role:${s.role})`).join("\n");
+    const staffMapping = staff.map(s=>`${s.name}=${s.id}`).join(", ");
 
-    return `你是「第二座山集团新媒体运营管理系统」的AI项目助手。你的角色是帮助项目经理将文字描述（会议纪要、运营方案、口头指令）转化为结构化的项目任务数据。
+    return `你是「第二座山集团新媒体运营管理系统」的AI项目助手，帮助项目经理将文字描述转化为结构化项目数据。
 
 ## 核心原则
-1. **严格关联**：系统是四级结构 L1项目 → L2工作类别 → L3资源/账号 → L4执行动作，每个层级必须挂载到上级
-2. **不猜测留空**：用户没有明确提到的信息一律留空（""或0），等待用户后续补充。绝不自行推断截止日期、优先级、工时、频率等
-3. **多轮追问**：当信息不完整时，主动追问缺失的关键信息。每次最多追问3个问题
-4. **全面管理**：你可以创建、修改、删除项目/类别/资源/动作，所有变更用户确认后执行
+1. **严格关联**：四级结构 L1项目→L2类别→L3资源→L4动作，每层必须挂载到上级
+2. **不猜测留空**：没明确提到的信息一律留空（""或0），绝不推断截止日期、优先级、工时、频率
+3. **主动追问**：信息不完整时追问缺失关键信息，每次最多3个问题
+4. **全面管理**：可创建、修改、删除各层级，所有变更经用户确认后执行
 
-## 当前数据
-项目和资源：
+## 当前项目结构（L1→L2→L3，动作层不在此列出）
 ${projSummary}
 
-人员：
-${staffSummary}
+## 人员（姓名=ID）
+${staffMapping}
 
 ## 约束
-- 类别标签(cat)只能是: 新媒体, OTA, 外卖, 私域, 直播, 活动
-- 资源类型(type)只能是: account, store, channel, live, other
-- 平台只能是: 抖音, 小红书, 微信公众号, 微信视频号, 大众点评, 美团, 饿了么, 快手, 微博（或留空）
-- 动作类型(aType): recurring(周期性) 或 once(一次性)
+- 类别标签(cat): 新媒体, OTA, 外卖, 私域, 直播, 活动
+- 资源类型(type): account, store, channel, live, other
+- 平台: 抖音, 小红书, 微信公众号, 微信视频号, 大众点评, 美团, 饿了么, 快手, 微博（或留空）
+- 动作类型(aType): recurring(周期性) / once(一次性)
 - 频率(freq): daily, weekly, biweekly, monthly
-- 人员ID映射: ${staff.map(s=>`${s.name}=${s.id}`).join(", ")}
 
-## 响应格式
-你必须始终返回纯JSON（不要markdown代码块），格式如下：
+## 响应格式（纯JSON，禁用markdown代码块）
+{"message":"中文自然语言说明","needsMoreInfo":true或false,"questions":["追问1"],"operations":[...],"milestones":[...],"risks":[...]}
 
+### operations 支持的操作：
+1. add_project: {"type":"add_project","project":{"name":"","priority":0-3,"isKey":false,"color":"#007AFF"},"categories":[{"name":"","cat":"","resources":[{"name":"","type":"","platform":"","owner":"人员id","actions":[{"name":"","aType":"recurring/once","freq":"","count":"","staffId":"","hours":0,"deadline":"","note":""}]}]}]}
+2. add_category: {"type":"add_category","projectId":"","category":{"name":"","cat":""},"resources":[同上]}
+3. add_resource: {"type":"add_resource","projectId":"","categoryId":"","resource":{"name":"","type":"","platform":"","owner":""},"actions":[同上]}
+4. add_action: {"type":"add_action","projectId":"","categoryId":"","resourceId":"","action":{"name":"","aType":"","freq":"","count":"","staffId":"","hours":0,"deadline":"","note":""}}
+5. delete_action: {"type":"delete_action","projectId":"","categoryId":"","resourceId":"","actionId":"","actionName":""}
+6. delete_resource: {"type":"delete_resource","projectId":"","categoryId":"","resourceId":"","resourceName":""}
+7. delete_project: {"type":"delete_project","projectId":"","projectName":""}
+8. update_action: {"type":"update_action","projectId":"","categoryId":"","resourceId":"","actionId":"","actionName":"","updates":{"staffId":"","deadline":""}}
+
+### milestones: [{"projectId":"项目id或__new__","name":"","date":"YYYY-MM-DD或空"}]
+### risks: [{"projectId":"项目id或__new__","name":"","impact":1-3,"probability":1-3}]
+
+## 行为规则
+- 模糊指令先追问：谁负责？什么频率？属于哪个项目？
+- "新项目"/"新品牌" → add_project；已有项目名 → 匹配projectId后添加
+- 自动建议里程碑和识别风险（人员过载、截止太紧等）
+- message 只写中文纯文字（禁止把JSON结构放入message）
+- 每次 operations 最多5个；超出时先做前5个并告知"请回复「继续」执行剩余X项"`;
+  };
+
+  // ── Commander prompt: extracts tasks and splits into project buckets for parallel execution ──
+  const buildCommanderPrompt = () =>
+    `你是任务提取总指挥，负责从用户输入中提取结构化任务并按所属项目分组，不做任何系统操作。
+输出纯JSON（禁用markdown，禁止任何解释）：
 {
-  "message": "你对用户说的话（确认理解、追问、总结等）",
-  "needsMoreInfo": true或false,
-  "questions": ["追问问题1", "追问问题2"],
-  "operations": [操作列表，当信息足够时才填写],
-  "milestones": [为相关项目建议的里程碑],
-  "risks": [识别到的风险]
-}
-
-### operations 支持的操作类型：
-
-1. add_project — 创建全新项目（L1）
-{
-  "type": "add_project",
-  "project": {
-    "name": "项目名称",
-    "priority": 0-3或留空,
-    "isKey": true/false,
-    "color": "#007AFF"
-  },
-  "categories": [
+  "condensed": "整体核心需求（≤80字）",
+  "projectBuckets": [
     {
-      "name": "类别名称", "cat": "标签",
-      "resources": [
-        {
-          "name": "资源名称", "type": "account等", "platform": "抖音等或空", "owner": "人员id或空",
-          "actions": [
-            {"name":"动作名","aType":"recurring/once","freq":"","count":"","staffId":"","hours":0,"deadline":"","note":""}
-          ]
-        }
-      ]
+      "projectName": "项目名称（如有）或空字符串",
+      "projectId": "已有项目ID（如能匹配）或__new__",
+      "condensed": "该项目的核心需求（≤60字）",
+      "tasks": [{"action":"任务描述","person":"负责人姓名或空","platform":"平台名或空","deadline":"截止日期或空","freq":"daily/weekly/monthly或空","isRecurring":false,"note":"备注或空"}]
     }
   ]
 }
-
-2. add_category — 向已有项目添加类别（L2）
-{ "type": "add_category", "projectId": "已有项目id", "category": {"name":"","cat":""}, "resources": [同上] }
-
-3. add_resource — 向已有类别添加资源（L3）
-{ "type": "add_resource", "projectId": "已有项目id", "categoryId": "已有类别id", "resource": {"name":"","type":"","platform":"","owner":""}, "actions": [同上] }
-
-4. add_action — 向已有资源添加动作（L4）
-{ "type": "add_action", "projectId": "已有项目id", "categoryId": "已有类别id", "resourceId": "已有资源id", "action": {"name":"","aType":"","freq":"","count":"","staffId":"","hours":0,"deadline":"","note":""} }
-
-5. delete_action — 删除指定动作
-{ "type": "delete_action", "projectId": "项目id", "categoryId": "类别id", "resourceId": "资源id", "actionId": "动作id", "actionName": "动作名（用于显示）" }
-
-6. delete_resource — 删除资源及其下全部动作
-{ "type": "delete_resource", "projectId": "项目id", "categoryId": "类别id", "resourceId": "资源id", "resourceName": "资源名" }
-
-7. delete_project — 删除整个项目
-{ "type": "delete_project", "projectId": "项目id", "projectName": "项目名" }
-
-8. update_action — 修改动作字段（支持修改 staffId/deadline/note/name/hours/freq/count/aType）
-{ "type": "update_action", "projectId": "项目id", "categoryId": "类别id", "resourceId": "资源id", "actionId": "动作id", "actionName": "动作名", "updates": {"staffId":"新人员id","deadline":"2026-05-01"} }
-
-### milestones 格式：
-[{ "projectId": "项目id或__new__", "name": "里程碑名称", "date": "2026-04-15或留空" }]
-
-### risks 格式：
-[{ "projectId": "项目id或__new__", "name": "风险描述", "impact": 1-3, "probability": 1-3 }]
-
-## 行为要求
-- 收到模糊指令时先追问：谁负责？什么频率？属于哪个项目？具体做什么？
-- 用户提到"新项目"/"新品牌"时用 add_project 创建全新项目
-- 用户提到已有项目名时匹配 projectId，向其下添加
-- 自动识别并建议里程碑（如"账号开设 → 内容规划 → 首批发布 → 运营稳定"）
-- 自动识别潜在风险（如同一人任务过多、截止日太紧、依赖链过长）
-- 当信息足够时 needsMoreInfo=false 并给出完整 operations
-- 当信息不够时 needsMoreInfo=true，operations 可以为空或给出部分（标注哪些字段留空待补）
-- message 字段永远只写一两句中文自然语言（如"已找到滕丞的3个任务，请确认删除"），绝对不能把 operations 里的 JSON 结构放进 message 字段，message 只能是中文纯文字，绝对不能包含任何 JSON 代码
-- 每次 operations 最多包含 5 个操作；若用户需求超过 5 个操作，先执行前 5 个并在 message 中告知"已完成第一批 X 项，请回复「继续」执行剩余 Y 项"，等待用户确认后继续`;
-  };
-
-  // ── Commander prompt (lightweight, no project data) ──
-  const buildCommanderPrompt = () =>
-    `你是任务提取专家（总指挥），仅负责从用户输入中提取结构化任务信息，不做任何系统操作。
-输出纯JSON（不含markdown，不含任何解释）：
-{"condensed":"核心需求一句话（≤80字）","tasks":[{"action":"任务描述","person":"负责人姓名或空","platform":"平台名或空","deadline":"截止日期或空","freq":"频率daily/weekly/monthly或空","isRecurring":false,"note":"备注或空"}],"projectHint":"涉及的项目名称或空"}`;
+规则：
+- 若所有任务属于同一项目，projectBuckets 只有一个元素
+- 若涉及多个独立项目/品牌，每个项目单独一个bucket
+- 新项目用 projectId: "__new__"，已有项目尽量填写名称`;
 
   // ── Shared JSON cleaner ──
   const parseAIResponse = (raw) => {
@@ -957,39 +922,39 @@ ${staffSummary}
     }
   };
 
-  // ── Shared Edge Function caller ──
-  // Uses anon key (session token approach had JWT expiry issues causing silent failures)
-  const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRpdmluaWZzdWNmZnN4eWl5eXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1MjgxNjksImV4cCI6MjA5MDEwNDE2OX0.VFqHzTvjN7wwo8ctwOfmL8-k7VJX93QeYDOzT8yLUuE";
-  const callEdgeFn = async (system, messages, provider, model, _authToken, opts = {}) => {
-    const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-proxy`;
+  // ── Edge Function caller (uses module-level AI_ANON_KEY / AI_EDGE_URL / AI_CLIENT_TIMEOUT_MS) ──
+  const callEdgeFn = async (system, messages, provider, model, opts = {}) => {
     const body = {provider, model, system, messages, ...opts};
     let rawBody = "", resp;
     const controller = new AbortController();
-    const abortTimer = setTimeout(() => controller.abort(), 65000);
+    const abortTimer = setTimeout(() => controller.abort(), AI_CLIENT_TIMEOUT_MS);
     try {
-      resp = await fetch(url, {
-        method:"POST",
-        headers:{"Content-Type":"application/json","Authorization":`Bearer ${ANON_KEY}`},
+      resp = await fetch(AI_EDGE_URL, {
+        method: "POST",
+        headers: {"Content-Type":"application/json","Authorization":`Bearer ${AI_ANON_KEY}`},
         body: JSON.stringify(body),
-        signal: controller.signal
+        signal: controller.signal,
       });
       rawBody = await resp.text();
     } catch(netErr) {
-      if (netErr.name === "AbortError") throw new Error("请求超时（65秒），请稍后重试或发送更简短的指令。");
-      throw new Error(`网络请求失败: ${netErr.message}`);
+      if (netErr.name === "AbortError") throw new Error("请求超时（55秒），模型响应过慢，请稍后重试或切换更快的模型");
+      throw new Error(`网络连接失败: ${netErr.message}`);
     } finally {
       clearTimeout(abortTimer);
     }
-    console.log(`[AI] status=${resp.status} len=${rawBody.length} preview=${rawBody.slice(0,200)}`);
+    console.log(`[AI] HTTP ${resp.status}, len=${rawBody.length}`);
     let result;
     try { result = JSON.parse(rawBody); } catch(_) {
-      throw new Error(`Edge Function 返回了非预期内容 (HTTP ${resp.status}): ${rawBody.slice(0,80)}`);
+      throw new Error(`服务器返回了非预期内容 (HTTP ${resp.status}): ${rawBody.slice(0, 80)}`);
     }
-    // Handle all error formats: {error:"..."}, {message:"..."}, {code:401,...}
-    const errMsg = result.error || result.message;
-    if (errMsg) throw new Error(`调用失败: ${errMsg}`);
+    const errMsg = result.error || (resp.status !== 200 ? result.message : null);
+    if (errMsg) {
+      if (errMsg.includes("未配置") || errMsg.includes("not set")) throw new Error(`API 密钥未配置：${errMsg}`);
+      if (errMsg.includes("超时") || errMsg.includes("timed out")) throw new Error(`AI 响应超时：${errMsg}`);
+      throw new Error(errMsg);
+    }
     const text = result.text || "";
-    if (!text.trim()) throw new Error(`AI 返回了空响应 (HTTP ${resp.status})，请稍后重试或切换模型。`);
+    if (!text.trim()) throw new Error(`AI 返回了空响应，请稍后重试或切换其他模型`);
     return text;
   };
 
@@ -1025,49 +990,55 @@ ${staffSummary}
 
       const {data:{session}} = await supabase.auth.getSession();
       if(!session?.access_token) throw new Error("请先登录后再使用AI助手");
-      const authToken = session.access_token;
 
-      // Build full conversation history for direct / follow-up mode
-      const historyMessages = updatedChat.map(m=>({role:m.role==="assistant"?"assistant":"user",content:m.role==="assistant"?(m.rawContent||m.content):m.content}));
+      // Trim history: last 8 messages (4 rounds), send only clean text for assistant messages (not raw JSON)
+      const trimmedChat = updatedChat.slice(-8);
+      const historyMessages = trimmedChat.map(m => ({
+        role: m.role === "assistant" ? "assistant" : "user",
+        content: m.role === "assistant" ? (m.parsed?.message || m.content) : m.content,
+      }));
 
-      // Single Edge Function call — agent orchestration happens server-side
+      // Agent mode: Commander → parallel Architects; Follow-up/direct: single Architect
       const useAgent = agentMode && !isFollowUpRef.current;
       setLoadingStage(useAgent ? "agent" : "architect");
       const callOpts = useAgent ? {agentMode:true, commanderSystem:buildCommanderPrompt()} : {};
-      const raw = await callEdgeFn(buildSystemPrompt(), historyMessages, provider, model, authToken, callOpts);
+      const raw = await callEdgeFn(buildSystemPrompt(), historyMessages, provider, model, callOpts);
+
       let parsed;
       try {
         parsed = parseAIResponse(raw);
       } catch(e2) {
-        console.error("AI parse failed. Raw response:", raw.slice(0,500));
-        const preview = raw.slice(0,120).replace(/\n/g," ");
-        setChatMessages([...updatedChat,{role:"assistant",content:`AI 返回的格式无法解析，请重试。\n\n原始内容片段：${preview}`,isError:true}]);
+        console.error("AI parse failed:", raw.slice(0, 300));
+        setChatMessages([...updatedChat, {
+          role:"assistant",
+          content:`AI 返回的内容格式无法解析，请重试，或将指令拆分成更小批次`,
+          isError:true,
+        }]);
         setLoading(false); setLoadingStage("");
         return;
       }
 
       const assistantMsg = {
-        role:"assistant",
+        role: "assistant",
         content: sanitizeMsg(parsed.message),
-        rawContent: raw,
         parsed,
-        hasOps:(parsed.operations||[]).length>0,
-        hasMilestones:(parsed.milestones||[]).length>0,
-        hasRisks:(parsed.risks||[]).length>0,
-        needsMoreInfo:parsed.needsMoreInfo,
-        questions:parsed.questions||[],
+        hasOps: (parsed.operations||[]).length > 0,
+        hasMilestones: (parsed.milestones||[]).length > 0,
+        hasRisks: (parsed.risks||[]).length > 0,
+        needsMoreInfo: parsed.needsMoreInfo,
+        questions: parsed.questions||[],
       };
       setChatMessages([...updatedChat, assistantMsg]);
       isFollowUpRef.current = !!parsed.needsMoreInfo;
       if(assistantMsg.hasOps && !parsed.needsMoreInfo) setPendingOps(parsed);
 
     } catch(e) {
-      console.error("AI Error:", e);
+      console.error("AI Error:", e.message);
       isFollowUpRef.current = false;
-      setChatMessages([...updatedChat,{role:"assistant",content:`解析出错: ${e.message}。请重试或换一种描述方式。`,isError:true}]);
+      setChatMessages([...updatedChat, {role:"assistant", content: e.message, isError:true}]);
     }
     setLoading(false); setLoadingStage("");
-    setTimeout(()=>inputRef.current?.focus(),100);
+    setTimeout(()=>inputRef.current?.focus(), 100);
   };
 
   const applyOperations = (parsed) => {
@@ -1203,8 +1174,10 @@ ${staffSummary}
   const confirmOps = () => {
     if(!pendingOps)return;
     applyOperations(pendingOps);
-    setChatMessages(prev=>[...prev,{role:"assistant",content:"已成功同步到系统！你可以在项目管理页面查看和调整细节。",isSuccess:true}]);
+    setChatMessages(prev=>[...prev,{role:"assistant",content:"已成功同步到系统！即将开启新对话…",isSuccess:true}]);
     setPendingOps(null);
+    // Auto-start a fresh conversation 1.5s after confirming — keeps history clean
+    setTimeout(() => resetChat(), 1500);
   };
 
   const removeOp = (idx) => {
