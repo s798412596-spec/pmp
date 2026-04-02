@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { flushSync } from "react-dom";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid, Legend } from "recharts";
 import {
   Mountain, LayoutDashboard, Settings, ClipboardList, CalendarDays, BarChart3, Users,
@@ -988,11 +989,13 @@ ${catalog || "（暂无项目）"}
         ? "登录状态已过期，请重新登录后再试"
         : `AI服务返回错误（${resp.status}）：请检查 Supabase Secrets 中 API 密钥是否正确配置`);
     }
-    const errMsg = result.error || (resp.status !== 200 ? result.message : null);
+    const errMsg = result.error || (resp.status !== 200 ? (result.message || `HTTP ${resp.status}`) : null);
     if (errMsg) {
       if (errMsg.includes("未配置") || errMsg.includes("not set")) throw new Error(`API 密钥未配置：${errMsg}`);
       if (errMsg.includes("超时") || errMsg.includes("timed out")) throw new Error(`AI 响应超时：${errMsg}`);
-      throw new Error(errMsg);
+      // Always include HTTP status so the caller's error classifier can match reliably
+      const prefix = resp.status !== 200 ? `AI服务返回错误（HTTP ${resp.status}）：` : "";
+      throw new Error(`${prefix}${errMsg}`);
     }
     const text = result.text || "";
     if (!text.trim()) throw new Error(`AI 返回了空响应，请稍后重试或切换其他模型`);
@@ -1020,12 +1023,13 @@ ${catalog || "（暂无项目）"}
     if (autoResetTimerRef.current) { clearTimeout(autoResetTimerRef.current); autoResetTimerRef.current = null; }
     const newUserMsg = {role:"user",content:userText};
     const updatedChat = [...chatMessages, newUserMsg];
-    setChatMessages(updatedChat);
-    setInput(""); setLoading(true); setLoadingStage("auth");
+    // ── Stage 1: auth — force an immediate render so the label is visible ──────
+    flushSync(() => {
+      setChatMessages(updatedChat);
+      setInput(""); setLoading(true); setLoadingStage("auth");
+    });
 
     // ── SAFETY NET ──────────────────────────────────────────────────────────
-    // Hard React-level timeout: forces loading=false after 42s even if the
-    // fetch AbortController fails silently (e.g. in proxied/sandboxed environments).
     const SAFETY_MS = 42000;
     let safetyFired = false;
     const safetyTimer = setTimeout(() => {
@@ -1050,11 +1054,10 @@ ${catalog || "（暂无项目）"}
       const savedModel = aiConfig.model||"";
       const model = (validModels.length>0&&savedModel&&!validModels.includes(savedModel))?validModels[0]:savedModel;
 
-      // Read token directly from localStorage — avoids getSession() network call
-      // (getSession() may hang if Supabase tries to refresh an expired token over
-      //  a slow/broken connection, keeping loading=true indefinitely).
-      // The edge function validates the token server-side; if it's expired the
-      // function returns 401 and we show a clear "please re-login" message.
+      // Read token directly from localStorage — avoids getSession() network call.
+      // getSession() can hang if Supabase tries to refresh an expired token over a
+      // broken connection, keeping loading=true indefinitely. The edge function
+      // validates the token server-side; if expired it returns 401.
       let accessToken = null;
       try {
         const stored = JSON.parse(localStorage.getItem("sb-divinifsucffsxyiyypc-auth-token") || "null");
@@ -1062,27 +1065,32 @@ ${catalog || "（暂无项目）"}
       } catch { /* malformed JSON in storage */ }
       if (!accessToken) throw new Error("__auth__:身份验证失败，请重新登录后再使用AI助手");
 
-      setLoadingStage("sending");
+      // ── Stage 2: sending — force render so user sees transition to "connecting" ──
+      flushSync(() => setLoadingStage("sending"));
 
-      // Trim history: last 8 messages (4 rounds), send only clean text for assistant messages (not raw JSON)
+      // Trim history: last 8 messages (4 rounds), send clean text for assistant messages
       const trimmedChat = updatedChat.slice(-8);
       const historyMessages = trimmedChat.map(m => ({
         role: m.role === "assistant" ? "assistant" : "user",
         content: m.role === "assistant" ? (m.parsed?.message || m.content) : m.content,
       }));
 
-      // Agent mode: Commander → parallel Architects; Follow-up/direct: single Architect
-      const useAgent = agentMode && !isFollowUpRef.current;
-      setLoadingStage(useAgent ? "agent" : "architect");
       // Only use lean (L1+L2) prompt when Commander will actually execute server-side.
+      const useAgent = agentMode && !isFollowUpRef.current;
       const COMMANDER_THRESHOLD = 400;
       const willUseCommander = useAgent && userText.length > COMMANDER_THRESHOLD;
       const callOpts = useAgent
         ? {agentMode:true, commanderSystem:buildCommanderPrompt(), projectsData:projects}
         : {};
+
+      // ── Fetch — user sees "📡 正在连接AI服务..." during the entire network wait ──
       const raw = await callEdgeFn(buildSystemPrompt(!willUseCommander), historyMessages, provider, model, callOpts, accessToken);
 
-      if (safetyFired) return; // safety timer already cleared the UI — don't overwrite
+      if (safetyFired) return;
+
+      // ── Stage 3: response received — force render so user sees "AI已接收" ────────
+      // This is the true "AI has responded" moment: raw data is back from the server.
+      flushSync(() => setLoadingStage(useAgent ? "agent" : "architect"));
 
       let parsed;
       try {
