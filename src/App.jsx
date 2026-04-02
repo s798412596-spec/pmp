@@ -955,22 +955,24 @@ ${catalog || "（暂无项目）"}
   };
 
   // ── Edge Function caller (uses module-level AI_ANON_KEY / AI_EDGE_URL / AI_CLIENT_TIMEOUT_MS) ──
-  const callEdgeFn = async (system, messages, provider, model, opts = {}) => {
+  const callEdgeFn = async (system, messages, provider, model, opts = {}, accessToken = null) => {
     const body = {provider, model, system, messages, ...opts};
     let rawBody = "", resp;
     const controller = new AbortController();
     const abortTimer = setTimeout(() => controller.abort(), AI_CLIENT_TIMEOUT_MS);
+    // Use the caller-supplied user token if available; fall back to anon key
+    const authHeader = accessToken ? `Bearer ${accessToken}` : `Bearer ${AI_ANON_KEY}`;
     try {
       resp = await fetch(AI_EDGE_URL, {
         method: "POST",
-        headers: {"Content-Type":"application/json","Authorization":`Bearer ${AI_ANON_KEY}`},
+        headers: {"Content-Type":"application/json","Authorization": authHeader},
         body: JSON.stringify(body),
         signal: controller.signal,
       });
       rawBody = await resp.text();
     } catch(netErr) {
-      if (netErr.name === "AbortError") throw new Error("请求超时（55秒），模型响应过慢，请稍后重试或切换更快的模型");
-      throw new Error(`网络连接失败: ${netErr.message}`);
+      if (netErr.name === "AbortError") throw new Error("AI服务超时（40秒），模型响应过慢，请稍后重试或切换更快的模型");
+      throw new Error(`AI服务连接失败（网络错误）：${netErr.message}`);
     } finally {
       clearTimeout(abortTimer);
     }
@@ -979,7 +981,13 @@ ${catalog || "（暂无项目）"}
     try { result = JSON.parse(rawBody); } catch(_) {
       throw new Error(`服务器返回了非预期内容 (HTTP ${resp.status}): ${rawBody.slice(0, 80)}`);
     }
-    if (resp.status === 401 || resp.status === 403) throw new Error("API 鉴权失败，请检查对应服务商的密钥是否已在 Supabase Secrets 中正确配置");
+    if (resp.status === 401 || resp.status === 403) {
+      const detail = result?.error || result?.message || "";
+      const isUserAuth = detail.toLowerCase().includes("jwt") || detail.toLowerCase().includes("invalid token") || detail.toLowerCase().includes("expired");
+      throw new Error(isUserAuth
+        ? "登录状态已过期，请重新登录后再试"
+        : `AI服务返回错误（${resp.status}）：请检查 Supabase Secrets 中 API 密钥是否正确配置`);
+    }
     const errMsg = result.error || (resp.status !== 200 ? result.message : null);
     if (errMsg) {
       if (errMsg.includes("未配置") || errMsg.includes("not set")) throw new Error(`API 密钥未配置：${errMsg}`);
@@ -1013,7 +1021,7 @@ ${catalog || "（暂无项目）"}
     const newUserMsg = {role:"user",content:userText};
     const updatedChat = [...chatMessages, newUserMsg];
     setChatMessages(updatedChat);
-    setInput(""); setLoading(true); setLoadingStage("");
+    setInput(""); setLoading(true); setLoadingStage("auth");
 
     // ── SAFETY NET ──────────────────────────────────────────────────────────
     // Hard React-level timeout: forces loading=false after 42s even if the
@@ -1026,7 +1034,7 @@ ${catalog || "（暂无项目）"}
       setChatMessages(prev => {
         const last = prev[prev.length - 1];
         if (last && last.role !== "assistant") {
-          return [...prev, {role:"assistant", content:"请求超时（42秒），请稍后重试，或在AI设置中切换更快的模型", isError:true}];
+          return [...prev, {role:"assistant", content:"AI服务超时（42秒），请稍后重试，或在AI设置中切换更快的模型", isError:true}];
         }
         return prev;
       });
@@ -1042,8 +1050,19 @@ ${catalog || "（暂无项目）"}
       const savedModel = aiConfig.model||"";
       const model = (validModels.length>0&&savedModel&&!validModels.includes(savedModel))?validModels[0]:savedModel;
 
-      const {data:{session}} = await supabase.auth.getSession();
-      if(!session?.access_token) throw new Error("请先登录后再使用AI助手");
+      // Read token directly from localStorage — avoids getSession() network call
+      // (getSession() may hang if Supabase tries to refresh an expired token over
+      //  a slow/broken connection, keeping loading=true indefinitely).
+      // The edge function validates the token server-side; if it's expired the
+      // function returns 401 and we show a clear "please re-login" message.
+      let accessToken = null;
+      try {
+        const stored = JSON.parse(localStorage.getItem("sb-divinifsucffsxyiyypc-auth-token") || "null");
+        accessToken = stored?.access_token || null;
+      } catch { /* malformed JSON in storage */ }
+      if (!accessToken) throw new Error("__auth__:身份验证失败，请重新登录后再使用AI助手");
+
+      setLoadingStage("sending");
 
       // Trim history: last 8 messages (4 rounds), send only clean text for assistant messages (not raw JSON)
       const trimmedChat = updatedChat.slice(-8);
@@ -1061,7 +1080,7 @@ ${catalog || "（暂无项目）"}
       const callOpts = useAgent
         ? {agentMode:true, commanderSystem:buildCommanderPrompt(), projectsData:projects}
         : {};
-      const raw = await callEdgeFn(buildSystemPrompt(!willUseCommander), historyMessages, provider, model, callOpts);
+      const raw = await callEdgeFn(buildSystemPrompt(!willUseCommander), historyMessages, provider, model, callOpts, accessToken);
 
       if (safetyFired) return; // safety timer already cleared the UI — don't overwrite
 
@@ -1096,7 +1115,20 @@ ${catalog || "（暂无项目）"}
       if (!safetyFired) {
         console.error("AI Error:", e.message);
         isFollowUpRef.current = false;
-        setChatMessages([...updatedChat, {role:"assistant", content: e.message, isError:true}]);
+        // Produce a user-friendly message based on error type
+        let userMsg = e.message;
+        if (userMsg.startsWith("__auth__:")) {
+          userMsg = userMsg.slice(9);
+        } else if (userMsg.includes("超时") || userMsg.includes("timeout") || userMsg.includes("AbortError")) {
+          userMsg = "AI服务超时，请稍后重试，或在AI设置中切换更快的模型";
+        } else if (userMsg.includes("401") || userMsg.includes("403")) {
+          userMsg = "身份验证失败，请重新登录后再试";
+        } else if (userMsg.includes("网络") || userMsg.includes("Failed to fetch") || userMsg.includes("NetworkError")) {
+          userMsg = `AI服务连接失败（网络错误）：${e.message}`;
+        } else if (/\b[45]\d{2}\b/.test(userMsg)) {
+          userMsg = `AI服务返回错误：${e.message}`;
+        }
+        setChatMessages([...updatedChat, {role:"assistant", content: userMsg, isError:true}]);
       }
     } finally {
       clearTimeout(safetyTimer);
@@ -1424,7 +1456,11 @@ ${catalog || "（暂无项目）"}
         </div>
         <div style={{padding:"10px 16px",background:T.borderLight,borderRadius:"4px 16px 16px 16px",fontSize:13,color:T.text3}}>
           <span>
-            {loadingStage==="agent"?"📋 总指挥→⚙️ 架构师 处理中":loadingStage==="architect"?"⚙️ 架构师处理中":"AI 分析中"}
+            {loadingStage==="auth"     ? "🔐 正在验证身份..."
+            :loadingStage==="sending"  ? "📡 正在连接AI服务..."
+            :loadingStage==="agent"    ? "📋 总指挥协调中，AI处理中..."
+            :loadingStage==="architect"? "⚙️ AI已接收，正在处理..."
+            :                           "AI 分析中"}
           </span>
           <span style={{marginLeft:6,opacity:0.6,fontVariantNumeric:"tabular-nums"}}>({loadingElapsed}s)</span>
         </div>
