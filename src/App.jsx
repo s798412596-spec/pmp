@@ -269,6 +269,7 @@ function useStorage() {
   const [loading, setLoading] = useState(true);
   const [syncStatus, setSyncStatus] = useState("idle"); // idle | syncing | synced | error
   const channelRef = useRef(null);
+  const serverLoadedRef = useRef(false); // true once Supabase returned real data
   const clientIdRef = useRef((() => {
     const KEY = "sm-client-id";
     let id = sessionStorage.getItem(KEY);
@@ -276,73 +277,87 @@ function useStorage() {
     return id;
   })());
 
-  // Load from Supabase, fallback to localStorage
-  useEffect(() => {
-    let done = false;
-    const fallbackToLocal = () => {
-      if (done) return;
-      done = true;
-      console.warn("Supabase load timeout/failed, using localStorage");
-      const local = localStorage.getItem(SK);
-      if (local) setData({ ...DEFAULT_DATA, ...JSON.parse(local) });
-      else setData(DEFAULT_DATA);
-      setSyncStatus("error");
-      setLoading(false);
-    };
-    // Timeout: if Supabase doesn't respond in 10s, fall back to localStorage
-    const loadTimeout = setTimeout(fallbackToLocal, 10000);
-    (async () => {
-      try {
-        const { data: row, error } = await supabase.from(TABLE).select("data").eq("id", "main").single();
-        if (done) return; // timeout already fired
-        clearTimeout(loadTimeout);
-        done = true;
-        if (row?.data && Object.keys(row.data).length > 0) {
-          const merged = { ...DEFAULT_DATA, ...row.data };
-          setData(merged);
-          localStorage.setItem(SK, JSON.stringify(merged));
-          setSyncStatus("synced");
-        } else {
-          // Try localStorage fallback
-          const local = localStorage.getItem(SK);
-          if (local) {
-            const parsed = { ...DEFAULT_DATA, ...JSON.parse(local) };
-            setData(parsed);
-            // Push to Supabase
-            await supabase.from(TABLE).upsert({ id: "main", data: parsed, updated_at: new Date().toISOString() });
-            setSyncStatus("synced");
-          } else {
-            setData(DEFAULT_DATA);
-            await supabase.from(TABLE).upsert({ id: "main", data: DEFAULT_DATA, updated_at: new Date().toISOString() });
-            localStorage.setItem(SK, JSON.stringify(DEFAULT_DATA));
-            setSyncStatus("synced");
-          }
-        }
-      } catch (e) {
-        clearTimeout(loadTimeout);
-        fallbackToLocal();
-      }
-      setLoading(false);
-    })();
-  }, []);
-
-  // Realtime subscription for multi-device sync
-  useEffect(() => {
-    const channel = supabase.channel('app-data-changes')
+  // ── Rebuild Realtime channel (call again after login to get authenticated subscription) ──
+  const resubscribe = () => {
+    if (channelRef.current) { supabase.removeChannel(channelRef.current); channelRef.current = null; }
+    const ch = supabase.channel('app-data-changes')
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: TABLE, filter: 'id=eq.main' }, (payload) => {
         if (payload.new?.data) {
           const remote = { ...DEFAULT_DATA, ...payload.new.data };
-          const isOwnEcho = remote._clientId && remote._clientId === clientIdRef.current;
-          if (isOwnEcho) return; // ignore our own save bouncing back
-          // Another user's update — apply unconditionally
+          if (remote._clientId && remote._clientId === clientIdRef.current) return; // own echo
           setData(remote);
           localStorage.setItem(SK, JSON.stringify(remote));
           setSyncStatus("synced");
         }
       })
       .subscribe();
-    channelRef.current = channel;
-    return () => { if (channelRef.current) supabase.removeChannel(channelRef.current); };
+    channelRef.current = ch;
+  };
+
+  // ── Fetch from Supabase; push localStorage if empty; returns true on success ──
+  const loadData = async () => {
+    try {
+      const { data: row } = await supabase.from(TABLE).select("data").eq("id", "main").single();
+      if (row?.data && Object.keys(row.data).length > 0) {
+        const merged = { ...DEFAULT_DATA, ...row.data };
+        setData(merged);
+        localStorage.setItem(SK, JSON.stringify(merged));
+        setSyncStatus("synced");
+        serverLoadedRef.current = true;
+        return true;
+      }
+      // Supabase row is empty — push local data up
+      const local = localStorage.getItem(SK);
+      const parsed = local ? { ...DEFAULT_DATA, ...JSON.parse(local) } : DEFAULT_DATA;
+      setData(parsed);
+      await supabase.from(TABLE).upsert({ id: "main", data: parsed, updated_at: new Date().toISOString() });
+      localStorage.setItem(SK, JSON.stringify(parsed));
+      setSyncStatus("synced");
+      serverLoadedRef.current = true;
+      return true;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  // ── Initial load (anon read policy now allows this before login) ──
+  useEffect(() => {
+    let cancelled = false;
+    const fallback = () => {
+      if (cancelled || serverLoadedRef.current) return; // don't overwrite a successful server load
+      console.warn("Supabase load failed, using localStorage");
+      const local = localStorage.getItem(SK);
+      setData(local ? { ...DEFAULT_DATA, ...JSON.parse(local) } : DEFAULT_DATA);
+      setSyncStatus("error");
+      setLoading(false);
+    };
+    const timer = setTimeout(fallback, 8000);
+    (async () => {
+      const ok = await loadData();
+      if (cancelled) return;
+      clearTimeout(timer);
+      if (!ok) fallback();
+      else setLoading(false);
+    })();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, []);
+
+  // ── Initial Realtime subscription (anon; works because anon read policy is set) ──
+  useEffect(() => {
+    resubscribe();
+    return () => { if (channelRef.current) { supabase.removeChannel(channelRef.current); channelRef.current = null; } };
+  }, []);
+
+  // ── On SIGNED_IN: reload fresh server data + rebuild Realtime with authenticated session ──
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event) => {
+      if (event === 'SIGNED_IN') {
+        await loadData();
+        resubscribe();
+        setLoading(false);
+      }
+    });
+    return () => subscription.unsubscribe();
   }, []);
 
   const save = useCallback(async (d) => {
@@ -621,7 +636,7 @@ const SyncBadge = ({ status, onSync }) => {
     synced: { c: T.success, l: "已同步", icon: CheckCircle2 },
     error: { c: T.danger, l: "点击同步", icon: RefreshCw },
   };
-  const needsSync = status === "idle" || status === "error";
+  const needsSync = status === "error";
   const s = map[status] || map.idle;
   const Icon = s.icon;
   return <div
