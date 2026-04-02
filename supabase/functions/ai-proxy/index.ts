@@ -260,10 +260,23 @@ serve(async (req) => {
         responseText = JSON.stringify(merged);
 
       } else {
-        // Commander failed — fall through to direct single Architect call
-        console.log("Falling back to direct Architect call");
+        // Commander failed — fall through to direct single Architect call.
+        // Inject full project detail for all projects into the last user message because
+        // the system prompt may be lean (L1+L2 only) and L3/L4 IDs are needed for updates/deletes.
+        console.log("Falling back to direct Architect call with full project detail injection");
+        let fallbackMessages = messages;
+        if (projects.length > 0) {
+          const allDetail = projects.map(buildProjectDetailBlock).filter(Boolean).join("\n\n---\n\n");
+          if (allDetail) {
+            const lastMsg = fallbackMessages[fallbackMessages.length - 1];
+            fallbackMessages = [
+              ...fallbackMessages.slice(0, -1),
+              { ...lastMsg, content: `【所有项目完整结构（L1→L4，Commander回退时使用）】\n${allDetail}\n\n---\n\n${lastMsg.content}` },
+            ];
+          }
+        }
         responseText = await withTimeout(
-          callLLM(activeProvider, model, system, messages, 4096),
+          callLLM(activeProvider, model, system, fallbackMessages, 4096),
           ARCHITECT_TIMEOUT_MS,
           "Architect",
         );
