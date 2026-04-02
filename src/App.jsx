@@ -3090,13 +3090,18 @@ function ScheduleView({data,save}){
     (proj.categories||[]).forEach(c=>(c.resources||[]).forEach(r=>(r.actions||[]).forEach(a=>{
       if(a.staffId!==sid)return;
       const h=Number(a.hours)||0;if(h<=0)return;
-      if(a.aType==='recurring'){
+      if(a.aType==='recurring'||(a.freq&&!a.aType)){
         if(a.freq==='daily')t+=h*5;
         else if(a.freq==='weekly')t+=h;
         else if(a.freq==='biweekly')t+=h*0.5;
         else if(a.freq==='monthly')t+=h*0.25;
-        else t+=h; // unknown freq: treat as weekly
-      }else if(a.aType==='once'&&isInWeek(a.deadline)){t+=h;}
+        else t+=h;
+      }else{
+        // Once task: include if deadline not yet passed
+        const weekMon=weekToMonday(week);
+        const dl=a.deadline?new Date(a.deadline):null;
+        if(!dl||dl>=weekMon){t+=h;}
+      }
     })));
     return Math.round(t*10)/10;
   };
@@ -3106,26 +3111,47 @@ function ScheduleView({data,save}){
     const ns=JSON.parse(JSON.stringify(weekSchedules));
     if(!ns[week])ns[week]={};
     let filledCount=0,taskCount=0;
-    staff.forEach(s=>{
+    // Debug: log data structure
+    const allActions=[];
+    (projects||[]).forEach(p=>(p.categories||[]).forEach(c=>(c.resources||[]).forEach(r=>(r.actions||[]).forEach(a=>allActions.push({...a,_proj:p.name})))));
+    const staffIds=(staff||[]).map(s=>s.id);
+    console.log("[AutoFill] staff IDs:",staffIds);
+    console.log("[AutoFill] total actions:",allActions.length,"with hours>0:",allActions.filter(a=>Number(a.hours)>0).length);
+    console.log("[AutoFill] actions sample:",allActions.slice(0,3).map(a=>({name:a.name,staffId:a.staffId,hours:a.hours,aType:a.aType,freq:a.freq})));
+    const staffIdSet=new Set(staffIds);
+    const unmatchedStaffIds=new Set(allActions.filter(a=>a.staffId&&!staffIdSet.has(a.staffId)).map(a=>a.staffId));
+    if(unmatchedStaffIds.size>0)console.warn("[AutoFill] actions with unmatched staffId:",Array.from(unmatchedStaffIds));
+    (staff||[]).forEach(s=>{
       if(!ns[week][s.id])ns[week][s.id]={};
-      projects.forEach(p=>{
+      (projects||[]).forEach(p=>{
         const dayH=[0,0,0,0,0,0,0];
         (p.categories||[]).forEach(c=>(c.resources||[]).forEach(r=>(r.actions||[]).forEach(a=>{
           if(a.staffId!==s.id)return;
           const h=Number(a.hours)||0;if(h<=0)return;
           taskCount++;
           if(a.aType==='recurring'||(!a.aType&&a.freq)){
+            // Recurring task: distribute by frequency
             if(a.freq==='daily'){for(let d=0;d<5;d++)dayH[d]+=h;}
             else if(a.freq==='weekly'){for(let d=0;d<5;d++)dayH[d]+=h/5;}
             else if(a.freq==='biweekly'){for(let d=0;d<5;d++)dayH[d]+=(h*0.5)/5;}
             else if(a.freq==='monthly'){for(let d=0;d<5;d++)dayH[d]+=(h*0.25)/5;}
-            else{for(let d=0;d<5;d++)dayH[d]+=h/5;} // fallback
-          }else if(a.deadline&&isInWeek(a.deadline)){
-            const dl=new Date(a.deadline),dow=dl.getDay();
-            const di=dow>=1&&dow<=5?dow-1:4;
-            dayH[di]+=h;
-          }else if(!a.deadline){
-            for(let d=0;d<5;d++)dayH[d]+=h/5; // no deadline, no freq → spread
+            else{for(let d=0;d<5;d++)dayH[d]+=h/5;}
+          }else{
+            // Once task (or no type): include if deadline not yet passed
+            const weekMon=weekToMonday(week);
+            const dl=a.deadline?new Date(a.deadline):null;
+            const deadlinePast=dl&&dl<weekMon; // deadline before this week
+            if(!deadlinePast){
+              if(dl&&isInWeek(a.deadline)){
+                // Deadline is in THIS week — put hours on the deadline day
+                const dow=dl.getDay();
+                const di=dow>=1&&dow<=5?dow-1:4;
+                dayH[di]+=h;
+              }else{
+                // Deadline is future or missing — spread across week (background workload)
+                for(let d=0;d<5;d++)dayH[d]+=h/5;
+              }
+            }
           }
         })));
         for(let d=0;d<5;d++){
@@ -3134,13 +3160,21 @@ function ScheduleView({data,save}){
         }
       });
     });
+    console.log("[AutoFill] taskCount:",taskCount,"filledCount:",filledCount);
     save({...data,weekSchedules:ns});
     if(taskCount===0){
-      setFillMsg({type:"warn",text:"未找到含工时的任务。请先在项目中填写任务工时（可用 AI 批量填补）。"});
+      const noHours=allActions.filter(a=>Number(a.hours)<=0).length;
+      const noStaff=allActions.filter(a=>!staffIdSet.has(a.staffId)).length;
+      let hint="";
+      if(allActions.length===0)hint="项目中没有任务。";
+      else if(noHours===allActions.length)hint=`${allActions.length} 条任务均未设置工时，请先用 AI 批量填补工时。`;
+      else if(noStaff>0)hint=`${noStaff} 条任务的负责人与当前员工列表不匹配（ID不符），请检查任务分配。`;
+      else hint="未找到含工时的任务。";
+      setFillMsg({type:"warn",text:`未能填充排期：${hint}`});
     }else{
       setFillMsg({type:"ok",text:`已根据 ${taskCount} 条任务工时自动填充本周排期，更新 ${filledCount} 个格子。`});
     }
-    setTimeout(()=>setFillMsg(null),5000);
+    setTimeout(()=>setFillMsg(null),8000);
   };
 
   const clearWeek=()=>{const ns=JSON.parse(JSON.stringify(weekSchedules));ns[week]={};save({...data,weekSchedules:ns});setFillMsg(null);};
