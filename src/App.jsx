@@ -1091,10 +1091,14 @@ ${catalog || "（暂无项目）"}
       // ── Fetch — user sees "⚙️ AI已接收，正在处理..." or "📋 总指挥协调中..." ──────
       // Auto-retry once on transient failures (network errors, timeouts, empty responses).
       // Config errors (API key not set, auth) are not retried.
-      const isRetryable = (err) =>
-        !err.message.includes("请检查 Supabase Secrets") &&
-        !err.message.includes("API 密钥未配置") &&
-        !err.message.startsWith("__auth__");
+      // Only retry on clearly transient failures — not on config/business/auth errors.
+      const isRetryable = (err) => {
+        const m = err.message;
+        return m.includes("网络错误") || m.includes("空响应") ||
+               m.includes("超时") || m.includes("AI服务超时") ||
+               m.includes("Failed to fetch") || m.includes("NetworkError") ||
+               err.name === "AbortError";
+      };
       let raw;
       try {
         raw = await callEdgeFn(buildSystemPrompt(!willUseCommander), historyMessages, provider, model, callOpts);
@@ -1141,16 +1145,18 @@ ${catalog || "（暂无项目）"}
       if (!safetyFired) {
         console.error("AI Error:", e.message);
         isFollowUpRef.current = false;
-        // Produce a user-friendly message based on error type
+        // Produce a user-friendly message based on error type.
+        // Config/Secrets errors are checked before HTTP status codes so they
+        // are not accidentally re-labelled as user auth failures.
         let userMsg = e.message;
         if (userMsg.startsWith("__auth__:")) {
           userMsg = userMsg.slice(9);
+        } else if (userMsg.includes("Supabase Secrets") || userMsg.includes("API 密钥未配置")) {
+          // Keep the descriptive config message as-is
         } else if (userMsg.includes("超时") || userMsg.includes("timeout") || userMsg.includes("AbortError")) {
           userMsg = "AI服务超时，请稍后重试，或在AI设置中切换更快的模型";
-        } else if (userMsg.includes("401") || userMsg.includes("403")) {
-          userMsg = "身份验证失败，请重新登录后再试";
-        } else if (userMsg.includes("Failed to fetch") || userMsg.includes("NetworkError")) {
-          userMsg = `AI服务连接失败（网络错误）：${e.message}`;
+        } else if (userMsg.includes("Failed to fetch") || userMsg.includes("NetworkError") || userMsg.includes("网络错误")) {
+          userMsg = `AI服务连接失败（网络错误），请稍后重试`;
         } else if (/\b[45]\d{2}\b/.test(userMsg)) {
           userMsg = `AI服务返回错误：${e.message}`;
         }
