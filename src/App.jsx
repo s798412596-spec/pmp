@@ -815,6 +815,7 @@ function AIAssistant({data,save,auditLog,user}) {
   const chatEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const inputRef = useRef(null);
+  const autoResetTimerRef = useRef(null); // tracks the post-confirm auto-reset timer for cancellation
 
   // Persist chat messages
   useEffect(()=>{try{localStorage.setItem("sm-ai-chat",JSON.stringify(chatMessages));}catch{}},[chatMessages]);
@@ -999,6 +1000,8 @@ ${catalog || "（暂无项目）"}
 
   const callAI = async (userText) => {
     if(!userText.trim())return;
+    // Cancel any pending auto-reset timer — user is starting a new interaction
+    if (autoResetTimerRef.current) { clearTimeout(autoResetTimerRef.current); autoResetTimerRef.current = null; }
     const newUserMsg = {role:"user",content:userText};
     const updatedChat = [...chatMessages, newUserMsg];
     setChatMessages(updatedChat);
@@ -1209,8 +1212,9 @@ ${catalog || "（暂无项目）"}
     applyOperations(pendingOps);
     setChatMessages(prev=>[...prev,{role:"assistant",content:"已成功同步到系统！即将开启新对话…",isSuccess:true}]);
     setPendingOps(null);
-    // Auto-start a fresh conversation 1.5s after confirming — keeps history clean
-    setTimeout(() => resetChat(), 1500);
+    // Auto-start a fresh conversation 1.5s after confirming — store timer so it can be cancelled
+    if (autoResetTimerRef.current) clearTimeout(autoResetTimerRef.current);
+    autoResetTimerRef.current = setTimeout(() => { autoResetTimerRef.current = null; resetChat(); }, 1500);
   };
 
   const removeOp = (idx) => {
@@ -1225,7 +1229,10 @@ ${catalog || "（暂无项目）"}
     const entry = { id: uid(), title, time: new Date().toISOString(), messages: chatMessages, count: chatMessages.length };
     setChatHistory(prev => [entry, ...prev].slice(0, 30));
   };
-  const resetChat = () => { saveCurrentToHistory(); setChatMessages([]); setPendingOps(null); setInput(""); isFollowUpRef.current=false; };
+  const resetChat = () => {
+    if (autoResetTimerRef.current) { clearTimeout(autoResetTimerRef.current); autoResetTimerRef.current = null; }
+    saveCurrentToHistory(); setChatMessages([]); setPendingOps(null); setInput(""); isFollowUpRef.current=false;
+  };
   const loadHistory = (entry) => { saveCurrentToHistory(); setChatMessages(entry.messages||[]); setPendingOps(null); setShowHistory(false); };
   const deleteHistory = (id, e) => { e.stopPropagation(); setChatHistory(prev => prev.filter(h => h.id !== id)); };
   const clearAllHistory = () => { setChatHistory([]); };
