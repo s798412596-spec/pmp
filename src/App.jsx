@@ -3068,48 +3068,151 @@ function RiskForm({risk,projects,staff,onSave,onCancel}){
 }
 
 // ─── Schedule ───────────────────────────
-function ScheduleView({data,save}){const{projects,staff,weekSchedules={}}=data;
+function ScheduleView({data,save}){
+  const{projects,staff,weekSchedules={}}=data;
   const[week,setWeek]=useState(()=>{const n=new Date(),s=new Date(n.getFullYear(),0,1),w=Math.ceil(((n-s)/864e5+s.getDay()+1)/7);return`${n.getFullYear()}-W${String(w).padStart(2,"0")}`;});
+  const[showRef,setShowRef]=useState(true);
+
   const getH=(sid,pid,d)=>(weekSchedules[week]?.[sid]?.[`${pid}-${d}`])||0;
   const setH=(sid,pid,d,h)=>{const ns=JSON.parse(JSON.stringify(weekSchedules));if(!ns[week])ns[week]={};if(!ns[week][sid])ns[week][sid]={};ns[week][sid][`${pid}-${d}`]=Math.max(0,Math.min(8,+h||0));save({...data,weekSchedules:ns});};
-  const dayTotal=(sid,d)=>projects.reduce((s,p)=>s+getH(sid,p.id,d),0);const weekTotal=sid=>WEEK_DAYS.reduce((s,_,i)=>s+dayTotal(sid,i),0);
+  const dayTotal=(sid,d)=>projects.reduce((s,p)=>s+getH(sid,p.id,d),0);
+  const weekTotal=sid=>WEEK_DAYS.reduce((s,_,i)=>s+dayTotal(sid,i),0);
+
+  // ISO week string → Monday Date
+  const weekToMonday=w=>{const[yr,wn]=w.split('-W').map(Number);const j=new Date(yr,0,4);const m=new Date(j);m.setDate(j.getDate()-((j.getDay()+6)%7)+(wn-1)*7);return m;};
+  const isInWeek=ds=>{if(!ds)return false;const d=new Date(ds),mon=weekToMonday(week),sun=new Date(mon);sun.setDate(mon.getDate()+6);return d>=mon&&d<=sun;};
+
+  // Weekly reference hours for staff sid on project pid, derived from task hours+freq
+  const calcRefHours=(sid,pid)=>{
+    let t=0;
+    const proj=projects.find(p=>p.id===pid);if(!proj)return 0;
+    (proj.categories||[]).forEach(c=>(c.resources||[]).forEach(r=>(r.actions||[]).forEach(a=>{
+      if(a.staffId!==sid||!(a.hours>0))return;
+      const h=a.hours||0;
+      if(a.aType==='recurring'){
+        if(a.freq==='daily')t+=h*5;
+        else if(a.freq==='weekly')t+=h;
+        else if(a.freq==='biweekly')t+=h*0.5;
+        else if(a.freq==='monthly')t+=h*0.25;
+      }else if(a.aType==='once'&&isInWeek(a.deadline)){t+=h;}
+    })));
+    return Math.round(t*10)/10;
+  };
+
+  // Auto-fill schedule from task hours across the week
+  const autoFill=()=>{
+    const ns=JSON.parse(JSON.stringify(weekSchedules));
+    if(!ns[week])ns[week]={};
+    staff.forEach(s=>{
+      if(!ns[week][s.id])ns[week][s.id]={};
+      projects.forEach(p=>{
+        const dayH=[0,0,0,0,0,0,0];
+        const proj=projects.find(pp=>pp.id===p.id);if(!proj)return;
+        (proj.categories||[]).forEach(c=>(c.resources||[]).forEach(r=>(r.actions||[]).forEach(a=>{
+          if(a.staffId!==s.id||!(a.hours>0))return;
+          const h=a.hours||0;
+          if(a.aType==='recurring'){
+            if(a.freq==='daily'){for(let d=0;d<5;d++)dayH[d]+=h;}
+            else if(a.freq==='weekly'){for(let d=0;d<5;d++)dayH[d]+=h/5;}
+            else if(a.freq==='biweekly'){for(let d=0;d<5;d++)dayH[d]+=(h*0.5)/5;}
+            else if(a.freq==='monthly'){for(let d=0;d<5;d++)dayH[d]+=(h*0.25)/5;}
+          }else if(a.aType==='once'&&a.deadline&&isInWeek(a.deadline)){
+            const dl=new Date(a.deadline),dow=dl.getDay();
+            const di=dow>=1&&dow<=5?dow-1:4;
+            dayH[di]+=h;
+          }
+        })));
+        for(let d=0;d<7;d++){
+          const v=Math.min(8,Math.round(dayH[d]*2)/2);
+          ns[week][s.id][`${p.id}-${d}`]=v;
+        }
+      });
+    });
+    save({...data,weekSchedules:ns});
+  };
+
+  const clearWeek=()=>{const ns=JSON.parse(JSON.stringify(weekSchedules));ns[week]={};save({...data,weekSchedules:ns});};
+
   return<div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:10}}>
       <h2 style={{margin:0,fontSize:22,fontWeight:700,color:T.text1,display:"flex",alignItems:"center",gap:8}}><CalendarDays size={22}/> 工时排期</h2>
-      <input type="week" value={week} onChange={e=>setWeek(e.target.value)} style={{padding:"7px 14px",borderRadius:T.radiusSm,border:`1.5px solid ${T.border}`,fontSize:12,outline:"none",fontFamily:T.font,transition:T.transition}}
-        onFocus={e=>{e.target.style.borderColor=T.accent}} onBlur={e=>{e.target.style.borderColor=T.border}}/>
-    </div>
-    {staff.map(s=>{const wt=weekTotal(s.id);return<Card key={s.id} style={{marginBottom:14,padding:"16px 18px"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-        <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <Avatar name={s.name} color={s.color||T.accent} size={28}/>
-          <span style={{fontSize:14,fontWeight:700,color:T.text1}}>{s.name}</span>
-        </div>
-        <span style={{fontSize:13,fontWeight:700,color:wt>40?T.danger:T.success}}>{wt}/40h</span>
+      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+        <button onClick={()=>setShowRef(v=>!v)} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 12px",borderRadius:20,border:`1.5px solid ${showRef?T.purple:T.border}`,background:showRef?"#F5F0FF":"transparent",color:showRef?T.purple:T.text3,fontSize:11,fontWeight:600,cursor:"pointer",transition:T.transition}}>
+          <Target size={12}/>{showRef?"隐藏任务参考":"显示任务参考"}
+        </button>
+        <Btn small onClick={autoFill} style={{background:"#059669",borderColor:"#059669"}} title="根据每位员工的任务工时和频率，自动计算并填入本周排期">
+          <RefreshCw size={12}/> 从任务自动填充
+        </Btn>
+        <Btn small v="secondary" onClick={clearWeek} title="清空本周所有手动排期数据">清空本周</Btn>
+        <input type="week" value={week} onChange={e=>setWeek(e.target.value)} style={{padding:"7px 14px",borderRadius:T.radiusSm,border:`1.5px solid ${T.border}`,fontSize:12,outline:"none",fontFamily:T.font,transition:T.transition}}
+          onFocus={e=>{e.target.style.borderColor=T.accent}} onBlur={e=>{e.target.style.borderColor=T.border}}/>
       </div>
-      <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-        <thead><tr>
-          <th style={{textAlign:"left",padding:"6px 8px",color:T.text3,borderBottom:`2px solid ${T.borderLight}`,minWidth:100,fontWeight:600}}>项目</th>
-          {WEEK_DAYS.map((d,i)=><th key={i} style={{padding:"6px 4px",color:T.text3,borderBottom:`2px solid ${T.borderLight}`,minWidth:44,textAlign:"center",fontWeight:600}}>{d}</th>)}
-          <th style={{padding:"6px 4px",borderBottom:`2px solid ${T.borderLight}`,textAlign:"center",color:T.text3,fontWeight:600}}>计</th>
-        </tr></thead>
-        <tbody>
-          {projects.map(p=>{const rt=WEEK_DAYS.reduce((sum,_,i)=>sum+getH(s.id,p.id,i),0);return<tr key={p.id}>
-            <td style={{padding:"4px 8px",borderBottom:`1px solid ${T.borderLight}`,fontWeight:600,fontSize:11,color:T.text1,display:"flex",alignItems:"center",gap:4}}><ProjectDot color={p.color} size={6}/>{p.name.slice(0,5)}</td>
-            {WEEK_DAYS.map((_,i)=><td key={i} style={{padding:"2px",borderBottom:`1px solid ${T.borderLight}`,textAlign:"center"}}>
-              <input type="number" min="0" max="8" step="0.5" value={getH(s.id,p.id,i)||""} placeholder="0" onChange={e=>setH(s.id,p.id,i,e.target.value)}
-                style={{width:38,padding:"4px 2px",textAlign:"center",borderRadius:6,border:`1.5px solid ${T.border}`,fontSize:11,outline:"none",background:getH(s.id,p.id,i)>0?T.accentLight:T.card,color:T.text1,fontFamily:T.font,transition:T.transition}}
-                onFocus={e=>{e.target.style.borderColor=T.accent}} onBlur={e=>{e.target.style.borderColor=T.border}}/>
-            </td>)}
-            <td style={{padding:"4px",borderBottom:`1px solid ${T.borderLight}`,textAlign:"center",fontWeight:700,color:rt>0?T.accent:T.border,fontSize:11}}>{rt}h</td>
-          </tr>;})}
-          <tr><td style={{padding:"6px 8px",fontWeight:700,color:T.text1}}>日计</td>
-            {WEEK_DAYS.map((_,i)=>{const dt=dayTotal(s.id,i);return<td key={i} style={{padding:"6px 4px",textAlign:"center",fontWeight:700,color:dt>8?T.danger:T.text1}}>{dt}h</td>;})}
-            <td style={{padding:"6px 4px",textAlign:"center",fontWeight:800,color:wt>40?T.danger:T.accent}}>{wt}h</td>
-          </tr>
-        </tbody>
-      </table>
-    </Card>;})}
+    </div>
+
+    {showRef&&<div style={{marginBottom:16,padding:"10px 16px",borderRadius:T.radiusSm,background:"#F5F0FF",border:`1px solid #DDD6FE`,fontSize:11,color:"#5B21B6",display:"flex",alignItems:"center",gap:8}}>
+      <Target size={13}/>
+      <span><b>任务参考</b>列显示每位员工基于任务工时（小时/次 × 频率）估算的每周工时。点击「从任务自动填充」可一键将此数据写入排期。</span>
+    </div>}
+
+    {staff.map(s=>{
+      const wt=weekTotal(s.id);
+      const totalRef=projects.reduce((sum,p)=>sum+calcRefHours(s.id,p.id),0);
+      return<Card key={s.id} style={{marginBottom:14,padding:"16px 18px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <Avatar name={s.name} color={s.color||T.accent} size={28}/>
+            <span style={{fontSize:14,fontWeight:700,color:T.text1}}>{s.name}</span>
+            {showRef&&totalRef>0&&<span style={{fontSize:11,color:T.purple,background:"#F5F0FF",borderRadius:10,padding:"2px 8px",fontWeight:600,border:`1px solid #DDD6FE`}}>任务估算 {totalRef}h/周</span>}
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            {wt>0&&totalRef>0&&showRef&&<span style={{fontSize:11,color:Math.abs(wt-totalRef)<2?T.success:wt>totalRef+2?T.warning:T.accent,fontWeight:600}}>
+              {Math.abs(wt-totalRef)<2?"排期≈估算":wt>totalRef+2?`排期超出估算${Math.round((wt-totalRef)*10)/10}h`:`排期低于估算${Math.round((totalRef-wt)*10)/10}h`}
+            </span>}
+            <span style={{fontSize:13,fontWeight:700,color:wt>40?T.danger:T.success}}>{wt}/40h</span>
+          </div>
+        </div>
+        <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+          <thead><tr>
+            <th style={{textAlign:"left",padding:"6px 8px",color:T.text3,borderBottom:`2px solid ${T.borderLight}`,minWidth:90,fontWeight:600}}>项目</th>
+            {WEEK_DAYS.map((d,i)=><th key={i} style={{padding:"6px 4px",color:T.text3,borderBottom:`2px solid ${T.borderLight}`,minWidth:44,textAlign:"center",fontWeight:600}}>{d}</th>)}
+            <th style={{padding:"6px 4px",borderBottom:`2px solid ${T.borderLight}`,textAlign:"center",color:T.text3,fontWeight:600}}>计</th>
+            {showRef&&<th style={{padding:"6px 8px",borderBottom:`2px solid ${T.borderLight}`,textAlign:"center",color:T.purple,fontWeight:600,whiteSpace:"nowrap",fontSize:11}}>任务参考</th>}
+          </tr></thead>
+          <tbody>
+            {projects.map(p=>{
+              const rt=WEEK_DAYS.reduce((sum,_,i)=>sum+getH(s.id,p.id,i),0);
+              const ref=calcRefHours(s.id,p.id);
+              const hasRef=ref>0;
+              const diff=rt>0&&hasRef?Math.round((rt-ref)*10)/10:null;
+              return<tr key={p.id}>
+                <td style={{padding:"4px 8px",borderBottom:`1px solid ${T.borderLight}`,fontWeight:600,fontSize:11,color:T.text1,display:"flex",alignItems:"center",gap:4}}><ProjectDot color={p.color} size={6}/>{p.name.slice(0,6)}</td>
+                {WEEK_DAYS.map((_,i)=><td key={i} style={{padding:"2px",borderBottom:`1px solid ${T.borderLight}`,textAlign:"center"}}>
+                  <input type="number" min="0" max="8" step="0.5" value={getH(s.id,p.id,i)||""} placeholder="0" onChange={e=>setH(s.id,p.id,i,e.target.value)}
+                    style={{width:38,padding:"4px 2px",textAlign:"center",borderRadius:6,border:`1.5px solid ${T.border}`,fontSize:11,outline:"none",background:getH(s.id,p.id,i)>0?T.accentLight:T.card,color:T.text1,fontFamily:T.font,transition:T.transition}}
+                    onFocus={e=>{e.target.style.borderColor=T.accent}} onBlur={e=>{e.target.style.borderColor=T.border}}/>
+                </td>)}
+                <td style={{padding:"4px",borderBottom:`1px solid ${T.borderLight}`,textAlign:"center",fontWeight:700,color:rt>0?T.accent:T.border,fontSize:11}}>{rt||"—"}</td>
+                {showRef&&<td style={{padding:"4px 10px",borderBottom:`1px solid ${T.borderLight}`,textAlign:"center",whiteSpace:"nowrap"}}>
+                  {hasRef?<><span style={{color:T.purple,fontWeight:700,fontSize:12}}>{ref}h</span>
+                    {diff!==null&&<span style={{fontSize:9,marginLeft:4,fontWeight:600,color:Math.abs(diff)<0.5?T.success:diff>0?T.warning:T.accent}}>
+                      {Math.abs(diff)<0.5?"✓":diff>0?`+${diff}`:diff}
+                    </span>}</>
+                  :<span style={{color:T.text3,fontSize:11}}>—</span>}
+                </td>}
+              </tr>;
+            })}
+            <tr style={{background:T.borderLight}}>
+              <td style={{padding:"6px 8px",fontWeight:700,color:T.text1,fontSize:11}}>日计</td>
+              {WEEK_DAYS.map((_,i)=>{const dt=dayTotal(s.id,i);return<td key={i} style={{padding:"6px 4px",textAlign:"center",fontWeight:700,color:dt>8?T.danger:dt>0?T.text1:T.text3}}>{dt||"—"}</td>;})}
+              <td style={{padding:"6px 4px",textAlign:"center",fontWeight:800,color:wt>40?T.danger:T.accent}}>{wt}h</td>
+              {showRef&&<td style={{padding:"6px 8px",textAlign:"center",fontWeight:700,color:T.purple,fontSize:11}}>{totalRef>0?`${totalRef}h`:"—"}</td>}
+            </tr>
+          </tbody>
+        </table>
+        </div>
+      </Card>;
+    })}
   </div>;
 }
 
