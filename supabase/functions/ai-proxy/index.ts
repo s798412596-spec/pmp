@@ -285,6 +285,9 @@ serve(async (req) => {
 
   } catch (error: any) {
     console.error("AI Proxy error:", error.message);
-    return respond({ error: error.message }, 500);
+    // Surface upstream provider auth failures (401/403) as HTTP 401 for deterministic client-side handling
+    const isAuthError = / 40[13]:/.test(error.message) ||
+      /[Uu]nauthorized|[Ff]orbidden|[Ii]nvalid.{0,10}(key|token|auth)/i.test(error.message);
+    return respond({ error: error.message }, isAuthError ? 401 : 500);
   }
 });
