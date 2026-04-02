@@ -7,7 +7,7 @@ const corsHeaders = {
 };
 
 const COMMANDER_TIMEOUT_MS = 10000;
-const ARCHITECT_TIMEOUT_MS = 25000;
+const ARCHITECT_TIMEOUT_MS = 45000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
