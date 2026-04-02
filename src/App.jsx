@@ -733,6 +733,7 @@ const AI_CLIENT_TIMEOUT_MS = 40000;
 // ─── AI CONFIG PANEL ─────────────────────
 // ═══════════════════════════════════════════
 const AI_PROVIDERS = [
+  { v: "qwen", l: "通义千问 Qwen", models: ["Qwen3.6-Plus", "Qwen3-Max", "Qwen3-Plus"] },
   { v: "glm", l: "智谱 GLM", models: ["GLM-5", "GLM-4-Plus", "GLM-4-Air"] },
   { v: "gemini", l: "Google Gemini", models: ["gemini-3.1-pro-preview", "gemini-3-flash", "gemini-3.1-flash-lite"] },
   { v: "anthropic", l: "Anthropic Claude", models: ["claude-sonnet-4-6-20260217", "claude-opus-4-6-20260205", "claude-haiku-4-5-20251015"] },
@@ -785,7 +786,7 @@ function AIConfigPanel({ open, onClose }) {
       <div style={{ lineHeight: 1.8 }}>
         <code style={{ background: T.card, padding: "1px 6px", borderRadius: 4, fontSize: 10 }}>GEMINI_API_KEY</code> — Google Gemini<br/>
         <code style={{ background: T.card, padding: "1px 6px", borderRadius: 4, fontSize: 10 }}>ANTHROPIC_API_KEY</code> — Anthropic Claude<br/>
-        <code style={{ background: T.card, padding: "1px 6px", borderRadius: 4, fontSize: 10 }}>OPENAI_API_KEY</code> — OpenAI GPT<br/>
+        <code style={{ background: T.card, padding: "1px 6px", borderRadius: 4, fontSize: 10 }}>OPENAI_API_KEY</code> — 通义千问 Qwen / OpenAI GPT<br/>
         <code style={{ background: T.card, padding: "1px 6px", borderRadius: 4, fontSize: 10 }}>DEEPSEEK_API_KEY</code> — DeepSeek<br/>
         <code style={{ background: T.card, padding: "1px 6px", borderRadius: 4, fontSize: 10 }}>CUSTOM_LLM_API_KEY</code> + <code style={{ background: T.card, padding: "1px 6px", borderRadius: 4, fontSize: 10 }}>CUSTOM_LLM_BASE_URL</code> — 自定义
       </div>
