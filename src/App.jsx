@@ -1054,16 +1054,34 @@ ${catalog || "（暂无项目）"}
       const savedModel = aiConfig.model||"";
       const model = (validModels.length>0&&savedModel&&!validModels.includes(savedModel))?validModels[0]:savedModel;
 
-      // Read token directly from localStorage — avoids getSession() network call.
-      // getSession() can hang if Supabase tries to refresh an expired token over a
-      // broken connection, keeping loading=true indefinitely. The edge function
-      // validates the token server-side; if expired it returns 401.
+      // Retrieve a valid access token without risk of hanging.
+      // Strategy:
+      //   1. Read the cached session from localStorage (instant, no network).
+      //   2. If the token is still valid (expires >60s from now) → use it directly.
+      //   3. If expired/expiring → call supabase.auth.refreshSession() with a 5s
+      //      hard timeout so we never wait more than 5s even when Supabase is slow.
+      //   4. If refresh also fails/times out → throw a clear auth error.
+      // This replaces the old getSession() which could hang indefinitely on refresh.
       let accessToken = null;
       try {
         const stored = JSON.parse(localStorage.getItem("sb-divinifsucffsxyiyypc-auth-token") || "null");
-        // Support both flat (v2) and nested (v1 legacy) token shapes
-        accessToken = stored?.access_token || stored?.currentSession?.access_token || null;
-      } catch { /* malformed JSON in storage */ }
+        const rawToken   = stored?.access_token    || stored?.currentSession?.access_token    || null;
+        const expiresAt  = stored?.expires_at      || stored?.currentSession?.expires_at      || 0;
+        const refreshTok = stored?.refresh_token   || stored?.currentSession?.refresh_token   || null;
+        const nowSec     = Math.floor(Date.now() / 1000);
+
+        if (rawToken && (expiresAt - nowSec) > 60) {
+          // Token is valid for at least another 60 seconds — use without any network call
+          accessToken = rawToken;
+        } else if (refreshTok) {
+          // Token expired or expiring soon — refresh it, but cap at 5s to prevent hangs
+          const { data } = await Promise.race([
+            supabase.auth.refreshSession({ refresh_token: refreshTok }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("refresh_timeout")), 5000)),
+          ]);
+          accessToken = data?.session?.access_token || null;
+        }
+      } catch { /* malformed JSON or refresh timed out / failed */ }
       if (!accessToken) throw new Error("__auth__:身份验证失败，请重新登录后再使用AI助手");
 
       // ── Stage 2: sending — brief preflight, force render ──────────────────────
