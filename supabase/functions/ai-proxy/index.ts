@@ -130,15 +130,20 @@ serve(async (req) => {
     new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   try {
-    // Request contract (agent mode):
-    //   system         — lean L1+L2 system prompt built by buildSystemPrompt(true)
-    //   messages       — trimmed chat history (last 8), assistant entries are plain text
+    // ── Request contract ──────────────────────────────────────────────────────
+    // Agent mode (long input >400 chars):
+    //   system          — lean L1+L2 system prompt (buildSystemPrompt(true) on client)
+    //   messages        — trimmed chat history (last 8), assistant entries are plain text only
     //   commanderSystem — Commander's system prompt (outputs projectBuckets[])
-    //   projectsData   — full project array from client; server uses buildProjectDetailBlock()
-    //                    to inject matched project's L3/L4 detail into each bucket's message
-    // Non-agent mode:
-    //   system         — full L1+L2+L3+L4 prompt built by buildSystemPrompt(false)
-    //   messages, provider, model only; no commanderSystem or projectsData
+    //   projectsData    — CANONICAL FIELD: full project array from client; server uses
+    //                     buildProjectDetailBlock() to inject per-bucket L3/L4 detail
+    //                     (replaces the originally-spec'd singular `projectDetail` field;
+    //                      multi-bucket parallel execution requires all projects' data)
+    //
+    // Non-agent mode / short input / follow-up:
+    //   system          — full L1+L2+L3+L4 prompt (buildSystemPrompt(false) on client)
+    //   messages, provider, model only; no commanderSystem or projectsData sent
+    // ─────────────────────────────────────────────────────────────────────────
     const { system, messages, provider, model, agentMode, commanderSystem, projectsData } = await req.json();
     if (!system || !messages) return respond({ error: "Missing system or messages" }, 400);
 
