@@ -33,7 +33,7 @@ async function callLLM(activeProvider: string, model: string, system: string, me
     const resp = await fetch("https://open.bigmodel.cn/api/paas/v4/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-      body: JSON.stringify({ model: model || "GLM-5.1", max_tokens: 8192, messages: [{ role: "system", content: system }, ...messages] })
+      body: JSON.stringify({ model: model || "GLM-5", max_tokens: 8192, messages: [{ role: "system", content: system }, ...messages] })
     });
     if (!resp.ok) { const e = await resp.text(); throw new Error("GLM error " + resp.status + ": " + e); }
     const r = await resp.json();

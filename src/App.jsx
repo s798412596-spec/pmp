@@ -702,7 +702,7 @@ function DeadlineAlerts({ actions, staff }) {
 // ─── AI CONFIG PANEL ─────────────────────
 // ═══════════════════════════════════════════
 const AI_PROVIDERS = [
-  { v: "glm", l: "智谱 GLM", models: ["GLM-5.1", "GLM-4-Plus", "GLM-4-Air"] },
+  { v: "glm", l: "智谱 GLM", models: ["GLM-5", "GLM-4-Plus", "GLM-4-Air"] },
   { v: "gemini", l: "Google Gemini", models: ["gemini-3.1-pro-preview", "gemini-3-flash", "gemini-3.1-flash-lite"] },
   { v: "anthropic", l: "Anthropic Claude", models: ["claude-sonnet-4-6-20260217", "claude-opus-4-6-20260205", "claude-haiku-4-5-20251015"] },
   { v: "openai", l: "OpenAI", models: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.3-instant"] },
