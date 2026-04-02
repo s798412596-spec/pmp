@@ -721,6 +721,8 @@ function DeadlineAlerts({ actions, staff }) {
 // ═══════════════════════════════════════════
 // ─── AI CONSTANTS (module-level) ─────────
 // ═══════════════════════════════════════════
+// Supabase anon key is intentionally public (client-side, role=anon, RLS enforced server-side).
+// Prefer VITE_SUPABASE_ANON_KEY env var in production to avoid hardcoding project-specific values.
 const AI_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ||
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRpdmluaWZzdWNmZnN4eWl5eXBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1MjgxNjksImV4cCI6MjA5MDEwNDE2OX0.VFqHzTvjN7wwo8ctwOfmL8-k7VJX93QeYDOzT8yLUuE";
 const AI_EDGE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-proxy`;
@@ -897,15 +899,21 @@ ${staffMapping}
   };
 
   // ── Commander prompt: extracts tasks and splits into project buckets for parallel execution ──
-  const buildCommanderPrompt = () =>
-    `你是任务提取总指挥，负责从用户输入中提取结构化任务并按所属项目分组，不做任何系统操作。
+  const buildCommanderPrompt = () => {
+    // Include a lightweight project catalog so Commander can output exact projectId/projectName
+    const catalog = projects.map(p => `  ${p.name} (id:${p.id})`).join("\n");
+    return `你是任务提取总指挥，负责从用户输入中提取结构化任务并按所属项目分组，不做任何系统操作。
+
+## 现有项目目录（名称和ID）
+${catalog || "（暂无项目）"}
+
 输出纯JSON（禁用markdown，禁止任何解释）：
 {
   "condensed": "整体核心需求（≤80字）",
   "projectBuckets": [
     {
-      "projectName": "项目名称（如有）或空字符串",
-      "projectId": "已有项目ID（如能匹配）或__new__",
+      "projectName": "与现有项目目录精确匹配的项目名称，或空字符串（新项目）",
+      "projectId": "与现有项目目录精确匹配的项目ID，新项目填 __new__",
       "condensed": "该项目的核心需求（≤60字）",
       "tasks": [{"action":"任务描述","person":"负责人姓名或空","platform":"平台名或空","deadline":"截止日期或空","freq":"daily/weekly/monthly或空","isRecurring":false,"note":"备注或空"}]
     }
@@ -914,7 +922,8 @@ ${staffMapping}
 规则：
 - 若所有任务属于同一项目，projectBuckets 只有一个元素
 - 若涉及多个独立项目/品牌，每个项目单独一个bucket
-- 新项目用 projectId: "__new__"，已有项目尽量填写名称`;
+- 新项目用 projectId: "__new__"，已有项目必须从上方目录中精确填写名称和ID`;
+  };
 
   // ── Shared JSON cleaner ──
   const parseAIResponse = (raw) => {
