@@ -3528,6 +3528,40 @@ export default function App() {
     setUser(null);
   };
 
+  // ── Employee merged save: merges filtered update back into full dataset ──
+  // Employees receive filteredData (only their projects) as their `data` prop.
+  // If they call save({...data, projects: updated}), they'd overwrite app_data
+  // with only their subset. This wrapper merges action-level changes back into
+  // the full project tree so no other data is lost.
+  const employeeSave = useCallback((filteredUpdate) => {
+    const mergedProjects = (data.projects || []).map(fp => {
+      const ep = (filteredUpdate.projects || []).find(p => p.id === fp.id);
+      if (!ep) return fp;
+      return {
+        ...fp,
+        categories: (fp.categories || []).map(fc => {
+          const ec = (ep.categories || []).find(c => c.id === fc.id);
+          if (!ec) return fc;
+          return {
+            ...fc,
+            resources: (fc.resources || []).map(fr => {
+              const er = (ec.resources || []).find(r => r.id === fr.id);
+              if (!er) return fr;
+              return {
+                ...fr,
+                actions: (fr.actions || []).map(fa => {
+                  const ea = (er.actions || []).find(a => a.id === fa.id);
+                  return ea ? { ...fa, ...ea } : fa;
+                })
+              };
+            })
+          };
+        })
+      };
+    });
+    return save({ ...data, projects: mergedProjects });
+  }, [data, save]);
+
   // ── Data filtering for non-admin users (must be before any conditional returns) ──
   const filteredData = useMemo(() => {
     if (!data || !user) return data;
@@ -3583,5 +3617,5 @@ export default function App() {
   const viewData = user.is_admin ? data : filteredData;
 
   if (user.is_admin) return <AdminApp data={viewData} user={{...user, id: user.staff_id, isAdmin: true}} save={save} syncStatus={syncStatus} auditLog={auditLog} taskInstancesHook={taskInstancesHook} deliverablesHook={deliverablesHook} onLogout={onLogout}/>;
-  return <EmployeeApp data={viewData} user={{...user, id: user.staff_id, isAdmin: false}} save={save} syncStatus={syncStatus} auditLog={auditLog} taskInstancesHook={taskInstancesHook} deliverablesHook={deliverablesHook} onLogout={onLogout}/>;
+  return <EmployeeApp data={viewData} user={{...user, id: user.staff_id, isAdmin: false}} save={employeeSave} syncStatus={syncStatus} auditLog={auditLog} taskInstancesHook={taskInstancesHook} deliverablesHook={deliverablesHook} onLogout={onLogout}/>;
 }
