@@ -826,14 +826,25 @@ function AIAssistant({data,save,auditLog,user}) {
   const getStaffName = (sid) => staff.find(s=>s.id===sid)?.name || "未分配";
   const getProjectName = (pid) => projects.find(p=>p.id===pid)?.name || (pid === "__new__" ? "新项目" : "未知项目");
 
-  const buildSystemPrompt = () => {
-    // Summary layer: L1+L2 only (no resources, no actions) — keeps token count minimal.
-    // Per-bucket resource/action detail is injected server-side via projectsData.
+  const buildSystemPrompt = (lean = false) => {
+    // lean=true  → L1+L2 only (agent mode: per-bucket L3/L4 injected server-side per bucket)
+    // lean=false → L1+L2+L3 (direct/follow-up mode: no bucket injection, needs resource IDs)
     const projSummary = projects.map(p => {
-      const cats = (p.categories||[]).map(c => `    类别: "${c.name}" (id:${c.id})`).join("\n");
-      return `  项目: "${p.name}" (id:${p.id})\n${cats}`;
+      if (lean) {
+        const cats = (p.categories||[]).map(c => `    类别: "${c.name}" (id:${c.id})`).join("\n");
+        return `  项目: "${p.name}" (id:${p.id})\n${cats}`;
+      } else {
+        const cats = (p.categories||[]).map(c => {
+          const ress = (c.resources||[]).map(r => `      资源: "${r.name}" (id:${r.id})`).join("\n");
+          return `    类别: "${c.name}" (id:${c.id})\n${ress}`;
+        }).join("\n");
+        return `  项目: "${p.name}" (id:${p.id})\n${cats}`;
+      }
     }).join("\n");
     const staffMapping = staff.map(s=>`${s.name}=${s.id}`).join(", ");
+    const structNote = lean
+      ? "（L1项目→L2类别概览；每个项目的资源/动作详情已在消息中单独注入）"
+      : "（L1项目→L2类别→L3资源）";
 
     return `你是「第二座山集团新媒体运营管理系统」的AI项目助手，帮助项目经理将文字描述转化为结构化项目数据。
 
@@ -843,7 +854,7 @@ function AIAssistant({data,save,auditLog,user}) {
 3. **主动追问**：信息不完整时追问缺失关键信息，每次最多3个问题
 4. **全面管理**：可创建、修改、删除各层级，所有变更经用户确认后执行
 
-## 当前项目概览（L1项目→L2类别；资源和动作层详情已在消息中单独提供）
+## 当前项目结构${structNote}
 ${projSummary}
 
 ## 人员（姓名=ID）
@@ -1005,7 +1016,7 @@ ${staffMapping}
       const callOpts = useAgent
         ? {agentMode:true, commanderSystem:buildCommanderPrompt(), projectsData:projects}
         : {};
-      const raw = await callEdgeFn(buildSystemPrompt(), historyMessages, provider, model, callOpts);
+      const raw = await callEdgeFn(buildSystemPrompt(useAgent), historyMessages, provider, model, callOpts);
 
       let parsed;
       try {
