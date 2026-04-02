@@ -930,16 +930,19 @@ ${staffSummary}
   };
 
   // ── Shared Edge Function caller ──
-  const callEdgeFn = async (system, messages, provider, model, authToken) => {
+  const callEdgeFn = async (system, messages, provider, model, authToken, opts = {}) => {
     const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-proxy`;
+    const body = {provider, model, system, messages, ...opts};
     const resp = await fetch(url, {
       method:"POST",
       headers:{"Content-Type":"application/json","Authorization":`Bearer ${authToken}`},
-      body: JSON.stringify({provider, model, system, messages})
+      body: JSON.stringify(body)
     });
     const result = await resp.json();
     if (result.error) throw new Error(result.error);
-    return result.text || "";
+    const text = result.text || "";
+    if (!text.trim()) throw new Error("AI 返回了空响应，请稍后重试或切换其他模型。");
+    return text;
   };
 
   // ── Sanitize message field ──
@@ -976,40 +979,14 @@ ${staffSummary}
       if(!session?.access_token) throw new Error("请先登录后再使用AI助手");
       const authToken = session.access_token;
 
-      let architectMessages; // what the Architect receives
+      // Build full conversation history for direct / follow-up mode
+      const historyMessages = updatedChat.map(m=>({role:m.role==="assistant"?"assistant":"user",content:m.role==="assistant"?(m.rawContent||m.content):m.content}));
 
-      if(agentMode && !isFollowUpRef.current) {
-        // ── Stage 1: Commander — condense user's raw input ──
-        setLoadingStage("commander");
-        let commanderOut = null;
-        try {
-          const cRaw = await callEdgeFn(buildCommanderPrompt(), [{role:"user",content:userText}], provider, model, authToken);
-          commanderOut = parseAIResponse(cRaw);
-        } catch(e) {
-          commanderOut = null; // gracefully fall back to direct mode
-        }
-
-        if(commanderOut?.condensed) {
-          // ── Stage 2 prep: Coordinator builds condensed context ──
-          const taskLines = (commanderOut.tasks||[]).map((t,i)=>
-            `${i+1}. ${t.action}${t.person?` | 负责人:${t.person}`:""}${t.platform?` | 平台:${t.platform}`:""}${t.deadline?` | 截止:${t.deadline}`:""}${t.freq?` | 频率:${t.freq}`:""}${t.note?` | 备注:${t.note}`:""}`
-          ).join("\n");
-          const condensedContext = `【总指挥整理的需求摘要】\n核心：${commanderOut.condensed}\n任务清单：\n${taskLines}${commanderOut.projectHint?`\n相关项目：${commanderOut.projectHint}`:""}`;
-          architectMessages = [{role:"user", content:condensedContext}];
-          setLoadingStage("architect");
-        } else {
-          // Commander failed: fall back to direct
-          architectMessages = updatedChat.map(m=>({role:m.role==="assistant"?"assistant":"user",content:m.role==="assistant"?(m.rawContent||m.content):m.content}));
-          setLoadingStage("architect");
-        }
-      } else {
-        // Direct mode or follow-up: full conversation history
-        setLoadingStage("architect");
-        architectMessages = updatedChat.map(m=>({role:m.role==="assistant"?"assistant":"user",content:m.role==="assistant"?(m.rawContent||m.content):m.content}));
-      }
-
-      // ── Architect call ──
-      const raw = await callEdgeFn(buildSystemPrompt(), architectMessages, provider, model, authToken);
+      // Single Edge Function call — agent orchestration happens server-side
+      const useAgent = agentMode && !isFollowUpRef.current;
+      setLoadingStage(useAgent ? "agent" : "architect");
+      const callOpts = useAgent ? {agentMode:true, commanderSystem:buildCommanderPrompt()} : {};
+      const raw = await callEdgeFn(buildSystemPrompt(), historyMessages, provider, model, authToken, callOpts);
       let parsed;
       try {
         parsed = parseAIResponse(raw);
@@ -1353,11 +1330,11 @@ ${staffSummary}
       </div>)}
 
       {loading&&<div style={{display:"flex",gap:10,marginBottom:14}}>
-        <div style={{width:28,height:28,borderRadius:8,background:loadingStage==="commander"?"#FFF8EC":T.accentLight,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,border:loadingStage==="commander"?`1px solid ${T.warning}40`:"none"}}>
-          <Loader2 size={14} color={loadingStage==="commander"?T.warning:T.accent} style={{animation:"spin 1s linear infinite"}}/>
+        <div style={{width:28,height:28,borderRadius:8,background:T.accentLight,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <Loader2 size={14} color={T.accent} style={{animation:"spin 1s linear infinite"}}/>
         </div>
         <div style={{padding:"10px 16px",background:T.borderLight,borderRadius:"4px 16px 16px 16px",fontSize:13,color:T.text3}}>
-          {loadingStage==="commander"?"📋 总指挥整理需求中...":loadingStage==="architect"?"⚙️ 架构师处理中...":"AI 分析中..."}
+          {loadingStage==="agent"?"📋 总指挥→⚙️ 架构师 处理中...":loadingStage==="architect"?"⚙️ 架构师处理中...":"AI 分析中..."}
         </div>
       </div>}
 
