@@ -735,7 +735,7 @@ const AI_CLIENT_TIMEOUT_MS = 40000;
 const AI_PROVIDERS = [
   { v: "qwen", l: "通义千问 Qwen", models: ["qwen3.6-plus-2026-04-02", "qwen3.5-plus", "qwen-plus", "qwen-max", "qwen3-max", "qwen-turbo"] },
   { v: "glm", l: "智谱 GLM", models: ["GLM-5", "GLM-4-Plus", "GLM-4-Air"] },
-  { v: "gemini", l: "Google Gemini", models: ["gemini-3.1-pro-preview", "gemini-3-flash", "gemini-3.1-flash-lite"] },
+  { v: "gemini", l: "Google Gemini", models: ["gemini-3.1-pro-preview", "gemini-3-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite", "gemini-2.5-flash"] },
   { v: "anthropic", l: "Anthropic Claude", models: ["claude-sonnet-4-6-20260217", "claude-opus-4-6-20260205", "claude-haiku-4-5-20251015"] },
   { v: "openai", l: "OpenAI", models: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.3-instant"] },
   { v: "deepseek", l: "DeepSeek", models: ["deepseek-v3.2", "deepseek-r1", "deepseek-v3"] },
