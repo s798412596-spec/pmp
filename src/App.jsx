@@ -83,14 +83,15 @@ const INITIAL_TAGS = [
   {id:"tag-15",name:"数据分析", color: T.text2},
 ];
 const getCatColor = (cat, customTags) => {
-  if (customTags) { const t = customTags.find(t => t.name === cat); if (t) return t.color; }
-  return CAT_COLORS[cat] || T.text3;
+  if (!customTags || customTags.length === 0) return CAT_COLORS[cat] || T.text3;
+  const t = customTags.find(t => t.name === cat);
+  return t ? t.color : T.text3;
 };
 const PIE_COLORS = [T.accent, T.teal, T.warning, T.purple, T.pink, T.success, "#5856D6", "#64D2FF"];
 const SK = "sm-ops-v6";
 const uid = () => crypto.randomUUID().replace(/-/g,"").slice(0, 12);
 const todayStr = () => new Date().toISOString().slice(0, 10);
-const PLATFORMS = ["抖音","小红书","微信公众号","微信视频号","大众点评","美团","饿了么","快手","微博","B站","拼多多","淘宝天猫","京东","企业微信","小程序"];
+const PLATFORMS = ["抖音","小红书","微信公众号","微信视频号","大众点评","美团","快手","微博","B站","拼多多","淘宝天猫","京东","企业微信","小程序"];
 const CONTENT_TYPES = ["短视频","图文","直播","活动推广","促销海报","用户互动","探店合作","日常运营"];
 const WEEK_DAYS = ["周一","周二","周三","周四","周五","周六","周日"];
 const RES_TYPES = [
@@ -2335,7 +2336,17 @@ function ProjectsView({data,save,auditLog,user,showHidden}){
   const toggle=k=>setExpanded(p=>({...p,[k]:!p[k]}));
   const Arrow=({open})=><div style={{transition:T.transition,transform:open?"rotate(90deg)":"rotate(0)",display:"flex",alignItems:"center"}}><ChevronRight size={14} color={T.text3}/></div>;
 
-  const saveTag=(tag)=>{const idx=customTags.findIndex(t=>t.id===tag.id);const newTags=idx>=0?customTags.map((t,i)=>i===idx?tag:t):[...customTags,{id:uid(),...tag}];save({...data,customTags:newTags});setTagEdit(null);};
+  const saveTag=(tag)=>{
+    const idx=customTags.findIndex(t=>t.id===tag.id);
+    const oldTag=idx>=0?customTags[idx]:null;
+    const nameChanged=oldTag&&oldTag.name!==tag.name;
+    const newTags=idx>=0?customTags.map((t,i)=>i===idx?tag:t):[...customTags,{id:uid(),...tag}];
+    const newProjects=nameChanged
+      ?projects.map(p=>({...p,categories:(p.categories||[]).map(c=>c.cat===oldTag.name?{...c,cat:tag.name}:c)}))
+      :projects;
+    save({...data,customTags:newTags,projects:newProjects});
+    setTagEdit(null);
+  };
   const delTag=(tagId)=>{const tag=customTags.find(t=>t.id===tagId);const inUse=projects.some(p=>(p.categories||[]).some(c=>c.cat===tag?.name));if(inUse&&!confirm(`标签"${tag?.name}"正在被类别使用，删除后相关类别标签将显示为灰色，确定继续？`))return;save({...data,customTags:customTags.filter(t=>t.id!==tagId)});};
 
   const logAction = (action, type, name, details={}) => {
