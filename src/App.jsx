@@ -2753,8 +2753,9 @@ function TaskFilterView({data,save,auditLog,user}){
   const delayAction=(actionId,days)=>{
     const act=actions.find(a=>a.id===actionId);
     if(!act?.deadline)return;
-    const d=new Date(act.deadline);d.setDate(d.getDate()+days);
-    const newDeadline=d.toISOString().slice(0,10);
+    const [y,m,day]=act.deadline.split("-").map(Number);
+    const d=new Date(y,m-1,day+days);
+    const newDeadline=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
     save({...data,projects:updateActionInProjects(projects,actionId,{deadline:newDeadline})});
     if(auditLog&&user)auditLog.addLog(user.id,user.name,"update","任务",act.name,{field:"deadline",before_value:act.deadline,after_value:newDeadline,detail:`延期${days}天`});
     setDelayOpenId(null);
