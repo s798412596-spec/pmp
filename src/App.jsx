@@ -2732,6 +2732,7 @@ function TaskFilterView({data,save,auditLog,user}){
   const[staffFilter,setStaffFilter]=useState("all");
   const[priFilter,setPriFilter]=useState("all");
   const[statusFilter,setStatusFilter]=useState("all");
+  const[delayOpenId,setDelayOpenId]=useState(null);
 
   const visible=actions.filter(a=>{
     if(projFilter!=="all"&&a.projectId!==projFilter)return false;
@@ -2747,6 +2748,16 @@ function TaskFilterView({data,save,auditLog,user}){
     const newStatus=STATUS.find(s=>s.v===newProgress);
     save({...data,projects:updateActionInProjects(projects,actionId,{progress:newProgress})});
     if(auditLog&&user)auditLog.addLog(user.id,user.name,"status_change","任务",act?.name||"",{before_value:oldStatus?.l,after_value:newStatus?.l});
+  };
+
+  const delayAction=(actionId,days)=>{
+    const act=actions.find(a=>a.id===actionId);
+    if(!act?.deadline)return;
+    const d=new Date(act.deadline);d.setDate(d.getDate()+days);
+    const newDeadline=d.toISOString().slice(0,10);
+    save({...data,projects:updateActionInProjects(projects,actionId,{deadline:newDeadline})});
+    if(auditLog&&user)auditLog.addLog(user.id,user.name,"update","任务",act.name,{field:"deadline",before_value:act.deadline,after_value:newDeadline,detail:`延期${days}天`});
+    setDelayOpenId(null);
   };
 
   const FilterPill=({label,active,onClick})=><button onClick={onClick} style={{padding:"6px 14px",borderRadius:20,fontSize:12,fontWeight:600,border:`1.5px solid ${active?T.accent:T.border}`,background:active?T.accentLight:T.card,color:active?T.accent:T.text2,cursor:"pointer",transition:T.transition,boxShadow:active?`0 0 0 2px ${T.accent}20`:"none"}}>{label}</button>;
@@ -2832,11 +2843,20 @@ function TaskFilterView({data,save,auditLog,user}){
                 <Avatar name={person?.name} color={person?.color||T.accent} size={20}/>{person?.name}
               </span>
               <span style={{fontSize:11,color:T.text3,display:"flex",alignItems:"center",gap:2}}><Clock size={11}/>{a.hours}h</span>
+              {a.aType==="once"&&a.deadline&&<div style={{position:"relative"}}>
+                <button onClick={e=>{e.stopPropagation();setDelayOpenId(delayOpenId===a.id?null:a.id);}} style={{padding:"4px 10px",borderRadius:T.radiusSm,fontSize:11,fontWeight:600,border:`1.5px solid ${T.warning}`,background:delayOpenId===a.id?T.warning+"22":T.card,color:T.warning,cursor:"pointer",display:"flex",alignItems:"center",gap:4,transition:T.transition}}>
+                  <CalendarDays size={11}/>延期
+                </button>
+                {delayOpenId===a.id&&<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:T.card,border:`1.5px solid ${T.border}`,borderRadius:T.radius,boxShadow:T.shadow,zIndex:200,minWidth:100,overflow:"hidden"}}>
+                  {[1,2,3,4,5].map(n=><div key={n} onClick={e=>{e.stopPropagation();delayAction(a.id,n);}} style={{padding:"8px 16px",fontSize:12,fontWeight:600,color:T.text1,cursor:"pointer",transition:T.transition,borderBottom:n<5?`1px solid ${T.borderLight}`:"none"}} onMouseEnter={e=>e.currentTarget.style.background=T.accentLight} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>+{n}天</div>)}
+                </div>}
+              </div>}
             </div>
           </div>
         </Card>;
       })}
     </div>
+    {delayOpenId&&<div onClick={()=>setDelayOpenId(null)} style={{position:"fixed",inset:0,zIndex:199}}/>}
   </div>;
 }
 
