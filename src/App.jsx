@@ -11,7 +11,7 @@ import {
   GitBranch, Milestone, GanttChartSquare, AlertOctagon, Link2, Paperclip, Eye,
   Lock, UserPlus, KeyRound, ShieldCheck, Upload, FolderArchive, FileCheck, FileX, FileClock,
   ArrowUpFromLine, FolderOpen, Image, FileVideo, FileAudio, File, EyeOff, Menu, Tag,
-  Megaphone, Users2, PenSquare, Database
+  Megaphone, Database
 } from "lucide-react";
 import { supabase, TABLE } from "./supabase.js";
 import React from "react";
@@ -981,7 +981,7 @@ ${staffMapping}
 ## 约束
 - 类别标签(cat): ${(data.customTags||INITIAL_TAGS).map(t=>t.name).join(", ")}
 - 资源类型(type): account(平台账号), store(店铺), channel(私域触点), live(直播频道), ad_account(广告账户), kol(KOL达人), creative(创意素材), document(文档方案), data(数据看板), event(活动会议), other(其他)
-- 平台: 抖音, 小红书, 微信公众号, 微信视频号, 大众点评, 美团, 饿了么, 快手, 微博, B站, 拼多多, 淘宝天猫, 京东, 企业微信, 小程序（或留空）
+- 平台: ${PLATFORMS.join(", ")}（或留空）
 - 动作类型(aType): recurring(周期性) / once(一次性)
 - 频率(freq): daily, weekly, biweekly, monthly
 
@@ -2336,7 +2336,9 @@ function ProjectsView({data,save,auditLog,user,showHidden}){
   const toggle=k=>setExpanded(p=>({...p,[k]:!p[k]}));
   const Arrow=({open})=><div style={{transition:T.transition,transform:open?"rotate(90deg)":"rotate(0)",display:"flex",alignItems:"center"}}><ChevronRight size={14} color={T.text3}/></div>;
 
-  const saveTag=(tag)=>{
+  const saveTag=(rawTag)=>{
+    const tag={...rawTag,name:rawTag.name.trim()};
+    if(customTags.some(t=>t.id!==tag.id&&t.name===tag.name)){alert(`标签"${tag.name}"已存在，请使用不同的名称`);return;}
     const idx=customTags.findIndex(t=>t.id===tag.id);
     const oldTag=idx>=0?customTags[idx]:null;
     const nameChanged=oldTag&&oldTag.name!==tag.name;
