@@ -192,7 +192,8 @@ function buildTagAnalyzerSystem(): string {
 3. 每个新增类别必须被分配到恰好一个标签（assign_tag），不得遗漏
 4. 新标签颜色从以下10色中选最合适的：#007AFF(蓝), #34C759(绿), #FF9500(橙), #FF3B30(红), #AF52DE(紫), #5AC8FA(浅蓝), #FF2D55(粉), #FFCC00(黄), #30B0C7(青绿), #A2845E(棕)
 5. add_tag 必须在对应 assign_tag 之前出现
-6. 输出严格JSON，禁用markdown代码块：{"tagOps":[{"type":"add_tag","tag":{"name":"xxx","color":"#xxx"}},{"type":"assign_tag","categoryName":"xxx","tagName":"xxx"}]}`;
+6. assign_tag 必须使用类别列表中的 id 字段作为 categoryId（不得使用名称）
+7. 输出严格JSON，禁用markdown代码块：{"tagOps":[{"type":"add_tag","tag":{"name":"xxx","color":"#xxx"}},{"type":"assign_tag","categoryId":"tmpcat-0","tagName":"xxx"}]}`;
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -465,12 +466,32 @@ serve(async (req) => {
       try {
         const tagParsed = tryParseJson(responseText);
         if (tagParsed?.operations?.length > 0) {
-          const newCatNames = collectNewCategoryNames(tagParsed.operations);
-          if (newCatNames.length > 0) {
-            console.log(`TagAnalyzer: classifying ${newCatNames.length} new categories...`);
+          // Assign stable temp IDs to new categories IN the operations so assign_tag can be ID-based.
+          // These temp IDs propagate to the frontend, which uses them as the real category IDs.
+          let tempIdx = 0;
+          const newCatMapping: Array<{id: string, name: string}> = [];
+          for (const op of tagParsed.operations) {
+            if (op.type === "add_category" && op.category?.name) {
+              const tid = `tmpcat-${tempIdx++}`;
+              op.category._tempId = tid;
+              newCatMapping.push({ id: tid, name: op.category.name });
+            }
+            if (op.type === "add_project" && Array.isArray(op.categories)) {
+              for (const c of op.categories) {
+                if (c.name) {
+                  const tid = `tmpcat-${tempIdx++}`;
+                  c._tempId = tid;
+                  newCatMapping.push({ id: tid, name: c.name });
+                }
+              }
+            }
+          }
+
+          if (newCatMapping.length > 0) {
+            console.log(`TagAnalyzer: classifying ${newCatMapping.length} new categories...`);
             const existingTags: any[] = tagAnalyzerEnabled;
             const tagSystem = buildTagAnalyzerSystem();
-            const tagMsg = `现有标签：${existingTags.length > 0 ? existingTags.map((t: any) => t.name).join("、") : "（无）"}\n本次新增类别：\n${newCatNames.map((n, i) => `${i + 1}. ${n}`).join("\n")}`;
+            const tagMsg = `现有标签：${existingTags.length > 0 ? existingTags.map((t: any) => t.name).join("、") : "（无）"}\n本次新增类别（id + 名称）：\n${newCatMapping.map((c, i) => `${i + 1}. id:${c.id}  名称:${c.name}`).join("\n")}`;
             const tagRaw = await withTimeout(
               callLLM(activeProvider, model, tagSystem, [{ role: "user", content: tagMsg }], 1024),
               TAG_ANALYZER_TIMEOUT_MS,
@@ -478,6 +499,13 @@ serve(async (req) => {
             );
             const tagResult = tryParseJson(tagRaw);
             if (Array.isArray(tagResult?.tagOps) && tagResult.tagOps.length > 0) {
+              // Enrich assign_tag ops with categoryName (for display in OpCard)
+              const catNameMap = new Map(newCatMapping.map(c => [c.id, c.name]));
+              for (const op of tagResult.tagOps) {
+                if (op.type === "assign_tag" && op.categoryId && !op.categoryName) {
+                  op.categoryName = catNameMap.get(op.categoryId) || op.categoryId;
+                }
+              }
               tagParsed.operations.push(...tagResult.tagOps);
               responseText = JSON.stringify(tagParsed);
               console.log(`TagAnalyzer OK: ${tagResult.tagOps.length} tag ops added`);

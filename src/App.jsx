@@ -1333,10 +1333,11 @@ ${catalog || "（暂无项目）"}
           color: op.project.color || PROJECT_COLORS[newProjects.length % PROJECT_COLORS.length],
           milestones: [],
           categories: (op.categories||[]).map(c => {
-            const catId = uid();
+            const catId = c._tempId || uid();
             createdCategoryIds.add(catId);
+            const {_tempId:_, ...catRest} = c;
             return {
-              id: catId, ...c,
+              id: catId, ...catRest,
               resources: (c.resources||[]).map(r => ({
                 id: uid(), ...r,
                 actions: (r.actions||[]).map(a => ({id:uid(),progress:0,dependsOn:[],attachments:[],...a}))
@@ -1380,9 +1381,10 @@ ${catalog || "（暂无项目）"}
       }
       if (op.type === "add_category" && op.category) {
         opNames.push(op.category.name);
-        const catId = uid();
+        const catId = op.category._tempId || uid();
         createdCategoryIds.add(catId);
-        const newCat = {id:catId,...op.category, resources:(op.resources||[]).map(r=>({id:uid(),...r,actions:(r.actions||[]).map(a=>({id:uid(),progress:0,dependsOn:[],attachments:[],...a}))}))};
+        const {_tempId:_t, ...catData} = op.category;
+        const newCat = {id:catId,...catData, resources:(op.resources||[]).map(r=>({id:uid(),...r,actions:(r.actions||[]).map(a=>({id:uid(),progress:0,dependsOn:[],attachments:[],...a}))}))};
         newProjects = newProjects.map(p => {
           if (p.id !== op.projectId) return p;
           return {...p, categories: [...(p.categories||[]), newCat]};
@@ -1439,12 +1441,15 @@ ${catalog || "（暂无项目）"}
           opNames.push(`新标签: ${op.tag.name}`);
         }
       }
-      if (op.type === "assign_tag" && op.categoryName && op.tagName) {
-        // Only retag categories created in THIS batch (by ID), preventing historical collisions
-        newProjects = newProjects.map(p=>({...p,categories:(p.categories||[]).map(c=>
-          createdCategoryIds.has(c.id) && c.name===op.categoryName ? {...c,cat:op.tagName} : c
-        )}));
-        opNames.push(`归类: ${op.categoryName}→${op.tagName}`);
+      if (op.type === "assign_tag" && op.tagName && (op.categoryId || op.categoryName)) {
+        // Primary: match by categoryId (temp ID from backend) — deterministic, no ambiguity
+        // Fallback: match by name within batch only (legacy/safety path)
+        newProjects = newProjects.map(p=>({...p,categories:(p.categories||[]).map(c=>{
+          const matchById = op.categoryId && c.id===op.categoryId;
+          const matchByName = !op.categoryId && createdCategoryIds.has(c.id) && c.name===op.categoryName;
+          return matchById || matchByName ? {...c,cat:op.tagName} : c;
+        })}));
+        opNames.push(`归类: ${op.categoryName||op.categoryId}→${op.tagName}`);
       }
     });
 
