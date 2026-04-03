@@ -170,18 +170,6 @@ function applyHoursToOps(operations: any[], hourUpdates: Array<{ actionName: str
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Tag Analyzer helpers ──────────────────────────────────────────────────────
-// Collect all new category names from an operations array (add_category + nested in add_project).
-function collectNewCategoryNames(operations: any[]): string[] {
-  const names: string[] = [];
-  for (const op of operations || []) {
-    if (op.type === "add_category" && op.category?.name) names.push(op.category.name);
-    if (op.type === "add_project" && Array.isArray(op.categories)) {
-      for (const c of op.categories) { if (c.name) names.push(c.name); }
-    }
-  }
-  return [...new Set(names)];
-}
-
 // Build the Tag Analyzer system prompt (used inline — no frontend round-trip needed).
 function buildTagAnalyzerSystem(): string {
   return `你是「会议解析者」，负责为本次新增的业务类别自动匹配或创建标签。
