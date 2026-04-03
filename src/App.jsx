@@ -1259,20 +1259,6 @@ ${catalog || "（暂无项目）"}
       try {
         parsed = parseAIResponse(raw);
       } catch(e2) {
-        // fallthrough to error block below
-        parsed = null;
-      }
-
-      // ── Brief "tag_analyzer" stage display ──────────────────────────────────
-      if (parsed?.operations?.some(op=>op.type==="add_tag"||op.type==="assign_tag")) {
-        flushSync(() => setLoadingStage("tag_analyzer"));
-        await new Promise(r => setTimeout(r, 500));
-      }
-      if (safetyFired) return;
-
-      if (!parsed) try {
-        parsed = parseAIResponse(raw);
-      } catch(e2) {
         console.error("AI parse failed:", raw.slice(0, 300));
         setChatMessages([...updatedChat, {
           role:"assistant",
@@ -1281,6 +1267,13 @@ ${catalog || "（暂无项目）"}
         }]);
         return;
       }
+
+      // ── Brief "tag_analyzer" stage display ──────────────────────────────────
+      if (parsed?.operations?.some(op=>op.type==="add_tag"||op.type==="assign_tag")) {
+        flushSync(() => setLoadingStage("tag_analyzer"));
+        await new Promise(r => setTimeout(r, 500));
+      }
+      if (safetyFired) return;
 
       const assistantMsg = {
         role: "assistant",
@@ -1329,6 +1322,8 @@ ${catalog || "（暂无项目）"}
     let newRisks = [...(data.risks||[])];
     let newCustomTags = [...(data.customTags&&data.customTags.length>0?data.customTags:INITIAL_TAGS)];
     const opNames = [];
+    // Track IDs of categories created in this batch — assign_tag applies only to these
+    const createdCategoryIds = new Set();
 
     (parsed.operations||[]).forEach(op => {
       if (op.type === "add_project" && op.project) {
@@ -1337,13 +1332,17 @@ ${catalog || "（暂无项目）"}
           id: uid(), ...op.project, priority: op.project.priority ?? newProjects.length,
           color: op.project.color || PROJECT_COLORS[newProjects.length % PROJECT_COLORS.length],
           milestones: [],
-          categories: (op.categories||[]).map(c => ({
-            id: uid(), ...c,
-            resources: (c.resources||[]).map(r => ({
-              id: uid(), ...r,
-              actions: (r.actions||[]).map(a => ({id:uid(),progress:0,dependsOn:[],attachments:[],...a}))
-            }))
-          }))
+          categories: (op.categories||[]).map(c => {
+            const catId = uid();
+            createdCategoryIds.add(catId);
+            return {
+              id: catId, ...c,
+              resources: (c.resources||[]).map(r => ({
+                id: uid(), ...r,
+                actions: (r.actions||[]).map(a => ({id:uid(),progress:0,dependsOn:[],attachments:[],...a}))
+              }))
+            };
+          })
         };
         // Attach milestones to new project
         (parsed.milestones||[]).filter(m=>m.projectId==="__new__").forEach(m=>{
@@ -1381,7 +1380,9 @@ ${catalog || "（暂无项目）"}
       }
       if (op.type === "add_category" && op.category) {
         opNames.push(op.category.name);
-        const newCat = {id:uid(),...op.category, resources:(op.resources||[]).map(r=>({id:uid(),...r,actions:(r.actions||[]).map(a=>({id:uid(),progress:0,dependsOn:[],attachments:[],...a}))}))};
+        const catId = uid();
+        createdCategoryIds.add(catId);
+        const newCat = {id:catId,...op.category, resources:(op.resources||[]).map(r=>({id:uid(),...r,actions:(r.actions||[]).map(a=>({id:uid(),progress:0,dependsOn:[],attachments:[],...a}))}))};
         newProjects = newProjects.map(p => {
           if (p.id !== op.projectId) return p;
           return {...p, categories: [...(p.categories||[]), newCat]};
@@ -1439,7 +1440,10 @@ ${catalog || "（暂无项目）"}
         }
       }
       if (op.type === "assign_tag" && op.categoryName && op.tagName) {
-        newProjects = newProjects.map(p=>({...p,categories:(p.categories||[]).map(c=>c.name===op.categoryName?{...c,cat:op.tagName}:c)}));
+        // Only retag categories created in THIS batch (by ID), preventing historical collisions
+        newProjects = newProjects.map(p=>({...p,categories:(p.categories||[]).map(c=>
+          createdCategoryIds.has(c.id) && c.name===op.categoryName ? {...c,cat:op.tagName} : c
+        )}));
         opNames.push(`归类: ${op.categoryName}→${op.tagName}`);
       }
     });
