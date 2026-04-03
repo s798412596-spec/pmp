@@ -997,6 +997,7 @@ ${staffMapping}
 6. delete_resource: {"type":"delete_resource","projectId":"","categoryId":"","resourceId":"","resourceName":""}
 7. delete_project: {"type":"delete_project","projectId":"","projectName":""}
 8. update_action: {"type":"update_action","projectId":"","categoryId":"","resourceId":"","actionId":"","actionName":"","updates":{"staffId":"","deadline":""}}
+9. delay_action: {"type":"delay_action","actionName":"任务名称","staffName":"负责人姓名（可选，留空时匹配所有同名任务）","projectName":"项目名（可选，精确匹配项目）","days":1-30} ← 推迟截止日期N天；仅对有deadline的once类型任务生效
 
 ### milestones: [{"projectId":"项目id或__new__","name":"","date":"YYYY-MM-DD或空"}]
 ### risks: [{"projectId":"项目id或__new__","name":"","impact":1-3,"probability":1-3}]
@@ -1434,6 +1435,27 @@ ${catalog || "（暂无项目）"}
           })};
         });
       }
+      if (op.type === "delay_action" && op.actionName && op.days > 0) {
+        let count = 0;
+        newProjects = newProjects.map(p => {
+          if (op.projectName && p.name !== op.projectName) return p;
+          return {...p, categories: (p.categories||[]).map(c => {
+            return {...c, resources: (c.resources||[]).map(r => {
+              return {...r, actions: (r.actions||[]).map(a => {
+                if (a.name !== op.actionName) return a;
+                if (op.staffName && staff.find(s=>s.id===a.staffId)?.name !== op.staffName) return a;
+                if (!a.deadline || a.aType !== "once") return a;
+                count++;
+                const [y,m,day] = a.deadline.split("-").map(Number);
+                const d = new Date(y, m-1, day + op.days);
+                const newDl = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+                return {...a, deadline: newDl};
+              })};
+            })};
+          })};
+        });
+        opNames.push(`延期${op.days}天: ${op.actionName}${op.staffName?` (${op.staffName})`:""}`);
+      }
       if (op.type === "add_tag" && op.tag?.name) {
         const normalized = op.tag.name.trim();
         const exists = newCustomTags.some(t=>t.name.trim().toLowerCase()===normalized.toLowerCase());
@@ -1563,6 +1585,17 @@ ${catalog || "（暂无项目）"}
           <div style={{flex:1}}/><button onClick={()=>removeOp(idx)} style={{background:"none",border:"none",color:T.danger,cursor:"pointer",padding:4}}><X size={12}/></button>
         </div>
         <div style={{fontSize:11,color:T.text2,marginTop:4,paddingLeft:22}}>{fields}</div>
+      </div>;
+    }
+    if(op.type==="delay_action"){
+      return<div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"#FFF8EC",borderRadius:T.radiusSm,borderLeft:`3px solid ${T.warning}`}}>
+        <CalendarDays size={14} color={T.warning}/>
+        <div style={{flex:1}}>
+          <div style={{fontSize:13,fontWeight:600,color:T.text1}}>延期 +{op.days}天: {op.actionName}</div>
+          <div style={{fontSize:11,color:T.text3}}>{op.staffName?`负责人: ${op.staffName}`:""}{op.projectName?` · ${op.projectName}`:""}</div>
+        </div>
+        <Badge color={T.warning} small>+{op.days}天</Badge>
+        <button onClick={()=>removeOp(idx)} style={{background:"none",border:"none",color:T.danger,cursor:"pointer",padding:4}}><X size={12}/></button>
       </div>;
     }
     if(op.type==="add_tag"&&op.tag?.name){const tc=op.tag.color||"#007AFF";
