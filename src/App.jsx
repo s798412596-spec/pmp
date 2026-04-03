@@ -2330,7 +2330,7 @@ function ProjectsView({data,save,auditLog,user,showHidden}){
   const[expanded,setExpanded]=useState({});const[modal,setModal]=useState(null);
   const[tagMgrOpen,setTagMgrOpen]=useState(false);
   const[tagEdit,setTagEdit]=useState(null);
-  const customTags=data.customTags||INITIAL_TAGS;
+  const customTags=(data.customTags&&data.customTags.length>0)?data.customTags:INITIAL_TAGS;
   const visibleSorted=showHidden?sorted:sorted.filter(p=>!p.hidden);
   const toggleHide=(pid,e)=>{e.stopPropagation();save({...data,projects:projects.map(p=>p.id===pid?{...p,hidden:!p.hidden}:p)});};
   const toggle=k=>setExpanded(p=>({...p,[k]:!p[k]}));
@@ -2549,7 +2549,7 @@ function ProjForm({p,onSave,onCancel}){
 }
 function CatForm({cat,customTags,onSave,onCancel}){
   const[f,setF]=useState(cat);
-  const tags=customTags||INITIAL_TAGS;
+  const tags=(customTags&&customTags.length>0)?customTags:INITIAL_TAGS;
   return<div>
     <Input label="名称" value={f.name} onChange={e=>setF({...f,name:e.target.value})}/>
     <div style={{marginBottom:14}}>

@@ -34,7 +34,7 @@ Three-stage: Commander → Architect → 工时分析者
 - `CatForm` uses dynamic customTags list instead of hardcoded CAT_COLORS
 - AI system prompt dynamically injects current tag names list
 - `RES_TYPES` expanded: 5→11 (added: ad_account, kol, creative, document, data, event)
-- `PLATFORMS` expanded: 8→15
+- `PLATFORMS` expanded: 8→14
 
 ## LocalStorage Keys
 - `sm-ai-config` — AI provider/model config
