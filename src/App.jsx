@@ -10,7 +10,8 @@ import {
   ShieldAlert, History, CalendarCheck, Filter, Download, TriangleAlert, LogOut,
   GitBranch, Milestone, GanttChartSquare, AlertOctagon, Link2, Paperclip, Eye,
   Lock, UserPlus, KeyRound, ShieldCheck, Upload, FolderArchive, FileCheck, FileX, FileClock,
-  ArrowUpFromLine, FolderOpen, Image, FileVideo, FileAudio, File, EyeOff, Menu
+  ArrowUpFromLine, FolderOpen, Image, FileVideo, FileAudio, File, EyeOff, Menu, Tag,
+  Megaphone, Users2, PenSquare, Database
 } from "lucide-react";
 import { supabase, TABLE } from "./supabase.js";
 import React from "react";
@@ -63,14 +64,48 @@ const T = {
 };
 
 const CAT_COLORS = {"新媒体": T.accent, "OTA": T.teal, "外卖": T.warning, "私域": T.purple, "直播": T.pink, "活动": T.success};
+const TAG_PALETTE = [T.accent, T.teal, T.warning, T.purple, T.pink, T.success, "#64D2FF", "#5856D6", "#FF9500", "#34C759"];
+const INITIAL_TAGS = [
+  {id:"tag-1", name:"新媒体",   color: T.accent},
+  {id:"tag-2", name:"短视频",   color: T.pink},
+  {id:"tag-3", name:"图文内容", color: T.purple},
+  {id:"tag-4", name:"直播",     color:"#FF2D55"},
+  {id:"tag-5", name:"OTA",      color: T.teal},
+  {id:"tag-6", name:"外卖",     color: T.warning},
+  {id:"tag-7", name:"私域",     color:"#5856D6"},
+  {id:"tag-8", name:"活动",     color: T.success},
+  {id:"tag-9", name:"电商",     color:"#64D2FF"},
+  {id:"tag-10",name:"广告投放", color:"#FF9500"},
+  {id:"tag-11",name:"KOL合作",  color:"#FF2D55"},
+  {id:"tag-12",name:"线下活动", color: T.teal},
+  {id:"tag-13",name:"门店运营", color:"#34C759"},
+  {id:"tag-14",name:"品牌推广", color:"#5856D6"},
+  {id:"tag-15",name:"数据分析", color: T.text2},
+];
+const getCatColor = (cat, customTags) => {
+  if (customTags) { const t = customTags.find(t => t.name === cat); if (t) return t.color; }
+  return CAT_COLORS[cat] || T.text3;
+};
 const PIE_COLORS = [T.accent, T.teal, T.warning, T.purple, T.pink, T.success, "#5856D6", "#64D2FF"];
 const SK = "sm-ops-v6";
 const uid = () => crypto.randomUUID().replace(/-/g,"").slice(0, 12);
 const todayStr = () => new Date().toISOString().slice(0, 10);
-const PLATFORMS = ["抖音","小红书","微信公众号","微信视频号","大众点评","美团","快手","微博"];
+const PLATFORMS = ["抖音","小红书","微信公众号","微信视频号","大众点评","美团","饿了么","快手","微博","B站","拼多多","淘宝天猫","京东","企业微信","小程序"];
 const CONTENT_TYPES = ["短视频","图文","直播","活动推广","促销海报","用户互动","探店合作","日常运营"];
 const WEEK_DAYS = ["周一","周二","周三","周四","周五","周六","周日"];
-const RES_TYPES = [{v:"account",l:"平台账号"},{v:"store",l:"店铺"},{v:"channel",l:"私域触点"},{v:"live",l:"直播频道"},{v:"other",l:"其他"}];
+const RES_TYPES = [
+  {v:"account",  l:"平台账号"},
+  {v:"store",    l:"店铺"},
+  {v:"channel",  l:"私域触点"},
+  {v:"live",     l:"直播频道"},
+  {v:"ad_account",l:"广告账户"},
+  {v:"kol",      l:"KOL达人"},
+  {v:"creative", l:"创意素材"},
+  {v:"document", l:"文档方案"},
+  {v:"data",     l:"数据看板"},
+  {v:"event",    l:"活动会议"},
+  {v:"other",    l:"其他"},
+];
 const FREQ_OPTS = [{v:"daily",l:"每日"},{v:"weekly",l:"每周"},{v:"biweekly",l:"每两周"},{v:"monthly",l:"每月"}];
 const STATUS = [{v:0,l:"未开始",c:T.text3,bg:T.borderLight,icon:"circle"},{v:1,l:"进行中",c:T.warning,bg:"#FFF8EC",icon:"circledot"},{v:2,l:"已完成",c:T.success,bg:"#F0FDF4",icon:"check"}];
 const PRIORITY_OPTS = [{v:0,l:"P0 紧急",c:T.danger},{v:1,l:"P1 高",c:T.warning},{v:2,l:"P2 中",c:T.accent},{v:3,l:"P3 低",c:T.text3}];
@@ -81,7 +116,7 @@ const RISK_STATUS = [{v:"open",l:"开放",c:T.danger},{v:"mitigating",l:"缓解�
 const MILESTONE_STATUS = [{v:0,l:"未开始",c:T.text3},{v:1,l:"进行中",c:T.warning},{v:2,l:"已完成",c:T.success}];
 const StatusIcon = ({v, size=14}) => v===0 ? <Circle size={size} strokeWidth={2}/> : v===1 ? <CircleDot size={size} strokeWidth={2}/> : <CheckCircle2 size={size} strokeWidth={2}/>;
 
-const RES_ICONS = {account: Smartphone, store: Store, channel: MessageCircle, live: Radio, other: Pin};
+const RES_ICONS = {account: Smartphone, store: Store, channel: MessageCircle, live: Radio, ad_account: Megaphone, kol: Star, creative: Image, document: FileText, data: Database, event: CalendarCheck, other: Pin};
 
 // ─── Mobile Detection Hook ──────────────
 const MOBILE_BP = 768;
@@ -257,7 +292,7 @@ const DEFAULT_PROJECTS = [
   ]},
 ];
 
-const DEFAULT_DATA = {projects:DEFAULT_PROJECTS,staff:DEFAULT_STAFF,weekSchedules:{},calendarItems:[],assets:[],comments:[],notifications:[],subtasks:{},taskInstances:{},risks:[],globalSearch:""};
+const DEFAULT_DATA = {projects:DEFAULT_PROJECTS,staff:DEFAULT_STAFF,weekSchedules:{},calendarItems:[],assets:[],comments:[],notifications:[],subtasks:{},taskInstances:{},risks:[],globalSearch:"",customTags:INITIAL_TAGS};
 
 function getAllActions(projects){const a=[];projects.forEach(p=>(p.categories||[]).forEach(c=>(c.resources||[]).forEach(r=>(r.actions||[]).forEach(act=>{a.push({...act,dependsOn:act.dependsOn||[],attachments:act.attachments||[],projectId:p.id,projectName:p.name,projectColor:p.color,isKey:p.isKey,priority:p.priority,catName:c.name,cat:c.cat,resName:r.name,resType:r.type,catId:c.id,resId:r.id});}))));return a;}
 function updateActionInProjects(projects,actionId,updates){return projects.map(p=>({...p,categories:(p.categories||[]).map(c=>({...c,resources:(c.resources||[]).map(r=>({...r,actions:(r.actions||[]).map(a=>a.id===actionId?{...a,...updates}:a)}))}))}));}
@@ -943,9 +978,9 @@ ${projSummary}
 ${staffMapping}
 
 ## 约束
-- 类别标签(cat): 新媒体, OTA, 外卖, 私域, 直播, 活动
-- 资源类型(type): account, store, channel, live, other
-- 平台: 抖音, 小红书, 微信公众号, 微信视频号, 大众点评, 美团, 饿了么, 快手, 微博（或留空）
+- 类别标签(cat): ${(data.customTags||INITIAL_TAGS).map(t=>t.name).join(", ")}
+- 资源类型(type): account(平台账号), store(店铺), channel(私域触点), live(直播频道), ad_account(广告账户), kol(KOL达人), creative(创意素材), document(文档方案), data(数据看板), event(活动会议), other(其他)
+- 平台: 抖音, 小红书, 微信公众号, 微信视频号, 大众点评, 美团, 饿了么, 快手, 微博, B站, 拼多多, 淘宝天猫, 京东, 企业微信, 小程序（或留空）
 - 动作类型(aType): recurring(周期性) / once(一次性)
 - 频率(freq): daily, weekly, biweekly, monthly
 
@@ -1442,7 +1477,7 @@ ${catalog || "（暂无项目）"}
           <div style={{flex:1}}/><button onClick={()=>removeOp(idx)} style={{background:"none",border:"none",color:T.danger,cursor:"pointer",padding:4}}><X size={12}/></button>
         </div>
         {(op.categories||[]).map((c,ci)=><div key={ci} style={{marginTop:6,paddingLeft:16}}>
-          <div style={{fontSize:11,fontWeight:600,color:CAT_COLORS[c.cat]||T.text2,display:"flex",alignItems:"center",gap:4}}><Badge color={CAT_COLORS[c.cat]||T.text3} small>{c.cat}</Badge> {c.name}</div>
+          <div style={{fontSize:11,fontWeight:600,color:getCatColor(c.cat,data.customTags),display:"flex",alignItems:"center",gap:4}}><Badge color={getCatColor(c.cat,data.customTags)} small>{c.cat}</Badge> {c.name}</div>
           {(c.resources||[]).map((r,ri)=><div key={ri} style={{paddingLeft:16,marginTop:2}}>
             <div style={{fontSize:11,color:T.text2,display:"flex",alignItems:"center",gap:4}}><Smartphone size={10}/>{r.name}{r.platform&&` (${r.platform})`}</div>
             {(r.actions||[]).map((a,ai)=><div key={ai} style={{fontSize:10,color:T.text3,paddingLeft:16,display:"flex",alignItems:"center",gap:4}}>
@@ -1468,9 +1503,9 @@ ${catalog || "（暂无项目）"}
         {(op.actions||[]).map((a,ai)=><div key={ai} style={{fontSize:11,color:T.text2,paddingLeft:22,display:"flex",alignItems:"center",gap:4,marginTop:2}}>{a.aType==="recurring"?<RefreshCw size={9}/>:<Target size={9}/>} {a.name}{a.staffId?` · ${getStaffName(a.staffId)}`:""}</div>)}
       </div>;
     }
-    if(op.type==="add_category"){const c=op.category||{};
-      return<div style={{padding:"10px 14px",background:T.borderLight,borderRadius:T.radiusSm,borderLeft:`3px solid ${CAT_COLORS[c.cat]||T.text3}`}}>
-        <div style={{display:"flex",alignItems:"center",gap:8}}><ListTodo size={14} color={CAT_COLORS[c.cat]||T.text3}/><span style={{fontSize:13,fontWeight:600,color:T.text1}}>新类别: {c.name}</span><Badge color={CAT_COLORS[c.cat]||T.text3} small>{c.cat}</Badge><div style={{flex:1}}/><button onClick={()=>removeOp(idx)} style={{background:"none",border:"none",color:T.danger,cursor:"pointer",padding:4}}><X size={12}/></button></div>
+    if(op.type==="add_category"){const c=op.category||{};const catC=getCatColor(c.cat,data.customTags);
+      return<div style={{padding:"10px 14px",background:T.borderLight,borderRadius:T.radiusSm,borderLeft:`3px solid ${catC}`}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}><ListTodo size={14} color={catC}/><span style={{fontSize:13,fontWeight:600,color:T.text1}}>新类别: {c.name}</span><Badge color={catC} small>{c.cat}</Badge><div style={{flex:1}}/><button onClick={()=>removeOp(idx)} style={{background:"none",border:"none",color:T.danger,cursor:"pointer",padding:4}}><X size={12}/></button></div>
       </div>;
     }
     if(op.type==="delete_action"||op.type==="delete_resource"||op.type==="delete_project"){
@@ -1980,7 +2015,7 @@ function EmployeeApp({data,user,save,syncStatus,auditLog,taskInstancesHook,deliv
   const doneTasks=myActions.filter(a=>a.progress===2);
 
   const TaskCard=({action:a,dimmed})=>{
-    const[showNote,setShowNote]=useState(false);const catColor=CAT_COLORS[a.cat]||T.text2;
+    const[showNote,setShowNote]=useState(false);const catColor=getCatColor(a.cat,data.customTags);
     const ds = getDeadlineStatus(a.deadline, a.progress);
     return<div style={{display:"flex",alignItems:"center",gap:14,padding:"14px 18px",background:dimmed?T.borderLight:T.card,borderRadius:T.radius,border:`1px solid ${dimmed?T.borderLight:ds?.level==="overdue"?"#FECACA":T.borderLight}`,borderLeft:`3px solid ${dimmed?T.border:catColor}`,opacity:dimmed?.5:1,marginBottom:8,boxShadow:dimmed?"none":T.shadow,transition:T.transition}}>
       <div style={{flex:1,minWidth:0}}>
@@ -2292,10 +2327,16 @@ function OverviewView({data,save,auditLog,user}){
 function ProjectsView({data,save,auditLog,user,showHidden}){
   const projects=data.projects||[];const staff=data.staff||[];const sorted=[...projects].sort((a,b)=>a.priority-b.priority);
   const[expanded,setExpanded]=useState({});const[modal,setModal]=useState(null);
+  const[tagMgrOpen,setTagMgrOpen]=useState(false);
+  const[tagEdit,setTagEdit]=useState(null);
+  const customTags=data.customTags||INITIAL_TAGS;
   const visibleSorted=showHidden?sorted:sorted.filter(p=>!p.hidden);
   const toggleHide=(pid,e)=>{e.stopPropagation();save({...data,projects:projects.map(p=>p.id===pid?{...p,hidden:!p.hidden}:p)});};
   const toggle=k=>setExpanded(p=>({...p,[k]:!p[k]}));
   const Arrow=({open})=><div style={{transition:T.transition,transform:open?"rotate(90deg)":"rotate(0)",display:"flex",alignItems:"center"}}><ChevronRight size={14} color={T.text3}/></div>;
+
+  const saveTag=(tag)=>{const idx=customTags.findIndex(t=>t.id===tag.id);const newTags=idx>=0?customTags.map((t,i)=>i===idx?tag:t):[...customTags,{id:uid(),...tag}];save({...data,customTags:newTags});setTagEdit(null);};
+  const delTag=(tagId)=>{const tag=customTags.find(t=>t.id===tagId);const inUse=projects.some(p=>(p.categories||[]).some(c=>c.cat===tag?.name));if(inUse&&!confirm(`标签"${tag?.name}"正在被类别使用，删除后相关类别标签将显示为灰色，确定继续？`))return;save({...data,customTags:customTags.filter(t=>t.id!==tagId)});};
 
   const logAction = (action, type, name, details={}) => {
     if (auditLog && user) auditLog.addLog(user.id, user.name, action, type, name, details);
@@ -2311,10 +2352,57 @@ function ProjectsView({data,save,auditLog,user,showHidden}){
   const delAction=(pId,cId,rId,aId)=>{const act=projects.find(p=>p.id===pId)?.categories?.find(c=>c.id===cId)?.resources?.find(r=>r.id===rId)?.actions?.find(a=>a.id===aId);save({...data,projects:projects.map(p=>p.id===pId?{...p,categories:(p.categories||[]).map(c=>c.id===cId?{...c,resources:(c.resources||[]).map(r=>r.id===rId?{...r,actions:(r.actions||[]).filter(a=>a.id!==aId)}:r)}:c)}:p)});logAction("delete","动作",act?.name||aId);};
 
   return<div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
       <h2 style={{margin:0,fontSize:22,fontWeight:700,color:T.text1,display:"flex",alignItems:"center",gap:8}}><Settings size={22}/> 项目管理</h2>
       <Btn onClick={()=>setModal({type:"project",target:{id:uid(),name:"",priority:projects.length,isKey:false,color:T.accent}})}><Plus size={14}/> 新建项目</Btn>
     </div>
+
+    {/* ── 标签管理 ── */}
+    <Card style={{marginBottom:16,padding:"12px 16px"}}>
+      <div onClick={()=>setTagMgrOpen(!tagMgrOpen)} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",userSelect:"none"}}>
+        <Tag size={14} color={T.accent}/>
+        <span style={{fontSize:13,fontWeight:600,color:T.text1,flex:1}}>标签管理</span>
+        <span style={{fontSize:11,color:T.text3}}>{customTags.length} 个标签</span>
+        <Arrow open={tagMgrOpen}/>
+      </div>
+      {tagMgrOpen&&<div style={{marginTop:12}}>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
+          {customTags.map(t=>(
+            <div key={t.id} style={{display:"flex",alignItems:"center",gap:3,padding:"4px 10px 4px 8px",background:t.color+"18",borderRadius:20,border:`1.5px solid ${t.color}40`}}>
+              <span style={{width:8,height:8,borderRadius:"50%",background:t.color,display:"inline-block",flexShrink:0}}/>
+              <span style={{fontSize:12,fontWeight:600,color:t.color,margin:"0 2px"}}>{t.name}</span>
+              <button onClick={()=>setTagEdit({...t})} style={{background:"none",border:"none",cursor:"pointer",padding:2,color:T.text3,display:"flex",alignItems:"center",lineHeight:1}}><Pencil size={10}/></button>
+              <button onClick={()=>delTag(t.id)} style={{background:"none",border:"none",cursor:"pointer",padding:2,color:T.danger,display:"flex",alignItems:"center",lineHeight:1}}><X size={10}/></button>
+            </div>
+          ))}
+          <button onClick={()=>setTagEdit({id:uid(),name:"",color:TAG_PALETTE[customTags.length%TAG_PALETTE.length]})} style={{padding:"4px 12px",borderRadius:20,border:`1.5px dashed ${T.border}`,background:"none",cursor:"pointer",fontSize:12,color:T.text3,display:"flex",alignItems:"center",gap:4}}>
+            <Plus size={12}/> 新增标签
+          </button>
+        </div>
+        {tagEdit&&(
+          <div style={{padding:"12px 14px",background:T.borderLight,borderRadius:T.radiusSm,marginTop:4}}>
+            <input value={tagEdit.name} onChange={e=>setTagEdit({...tagEdit,name:e.target.value})} placeholder="标签名称" maxLength={12}
+              style={{width:"100%",padding:"6px 10px",borderRadius:6,border:`1.5px solid ${T.border}`,fontSize:12,outline:"none",marginBottom:10,fontFamily:T.font,boxSizing:"border-box"}}/>
+            <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}>
+              <span style={{fontSize:11,color:T.text3,marginRight:2}}>颜色：</span>
+              {TAG_PALETTE.map(c=>(
+                <button key={c} onClick={()=>setTagEdit({...tagEdit,color:c})} style={{width:22,height:22,borderRadius:"50%",background:c,border:tagEdit.color===c?`3px solid ${T.text1}`:`2px solid ${c}60`,cursor:"pointer",padding:0,flexShrink:0}}/>
+              ))}
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <div style={{display:"flex",alignItems:"center",gap:4,padding:"4px 10px",background:tagEdit.color+"18",borderRadius:16,border:`1.5px solid ${tagEdit.color}50`}}>
+                <span style={{width:8,height:8,borderRadius:"50%",background:tagEdit.color,display:"inline-block"}}/>
+                <span style={{fontSize:12,fontWeight:600,color:tagEdit.color}}>{tagEdit.name||"预览"}</span>
+              </div>
+              <div style={{flex:1}}/>
+              <Btn small v="secondary" onClick={()=>setTagEdit(null)}>取消</Btn>
+              <Btn small onClick={()=>saveTag(tagEdit)} disabled={!tagEdit.name.trim()}>保存</Btn>
+            </div>
+          </div>
+        )}
+      </div>}
+    </Card>
+
     {visibleSorted.map(p=>{const pOpen=expanded[p.id]!==false;const pa=getAllActions([p]);const pPct=pa.length?Math.round(pa.filter(a=>a.progress===2).length/pa.length*100):0;
       return<Card key={p.id} highlight={p.isKey} style={{marginBottom:14,padding:0,overflow:"hidden"}}>
         <div onClick={()=>toggle(p.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"14px 20px",cursor:"pointer",background:T.card,borderBottom:pOpen?`1px solid ${T.borderLight}`:"none",transition:T.transition}}>
@@ -2345,7 +2433,7 @@ function ProjectsView({data,save,auditLog,user,showHidden}){
                 {ds&&(ds.level==="overdue"||ds.level==="today")&&<span style={{color:T.danger,fontSize:9}}>!</span>}
               </div>;})}
           </div>}
-          {(p.categories||[]).map(c=>{const cOpen=expanded[c.id]!==false;const cc=CAT_COLORS[c.cat]||T.text2;
+          {(p.categories||[]).map(c=>{const cOpen=expanded[c.id]!==false;const cc=getCatColor(c.cat,data.customTags);
             return<div key={c.id} style={{marginTop:8}}>
               <div onClick={()=>toggle(c.id)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:T.borderLight,borderRadius:T.radiusSm,cursor:"pointer",borderLeft:`3px solid ${cc}`,transition:T.transition}}>
                 <Arrow open={cOpen}/><Badge color={cc}>{c.cat}</Badge><span style={{fontSize:12,fontWeight:600,color:T.text1}}>{c.name}</span>
@@ -2388,7 +2476,7 @@ function ProjectsView({data,save,auditLog,user,showHidden}){
                   </div>;})}
               </div>}
             </div>;})}
-          <div style={{marginTop:8}}><Btn small v="secondary" onClick={()=>setModal({type:"category",target:{id:uid(),name:"",cat:"新媒体"},pp:{pId:p.id}})}><Plus size={12}/> 类别</Btn></div>
+          <div style={{marginTop:8}}><Btn small v="secondary" onClick={()=>setModal({type:"category",target:{id:uid(),name:"",cat:customTags[0]?.name||"新媒体"},pp:{pId:p.id}})}><Plus size={12}/> 类别</Btn></div>
         </div>}
       </Card>;})}
 
@@ -2396,7 +2484,7 @@ function ProjectsView({data,save,auditLog,user,showHidden}){
       {modal?.type==="project"&&<ProjForm p={modal.target} onSave={saveProject} onCancel={()=>setModal(null)}/>}
     </Modal>
     <Modal open={modal?.type==="category"} onClose={()=>setModal(null)} title="类别" width={420}>
-      {modal?.type==="category"&&<CatForm cat={modal.target} onSave={c=>saveCategory(modal.pp.pId,c)} onCancel={()=>setModal(null)}/>}
+      {modal?.type==="category"&&<CatForm cat={modal.target} customTags={customTags} onSave={c=>saveCategory(modal.pp.pId,c)} onCancel={()=>setModal(null)}/>}
     </Modal>
     <Modal open={modal?.type==="resource"} onClose={()=>setModal(null)} title="资源" width={460}>
       {modal?.type==="resource"&&<ResForm res={modal.target} staff={data.staff} onSave={r=>saveResource(modal.pp.pId,modal.pp.cId,r)} onCancel={()=>setModal(null)}/>}
@@ -2446,8 +2534,26 @@ function ProjForm({p,onSave,onCancel}){
     <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><Btn v="secondary" onClick={onCancel}>取消</Btn><Btn onClick={()=>onSave(f)} disabled={!f.name.trim()}>保存</Btn></div>
   </div>;
 }
-function CatForm({cat,onSave,onCancel}){const[f,setF]=useState(cat);return<div><Input label="名称" value={f.name} onChange={e=>setF({...f,name:e.target.value})}/><QuickSelect label="标签" options={Object.keys(CAT_COLORS)} value={f.cat} onChange={v=>setF({...f,cat:v})}/><div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><Btn v="secondary" onClick={onCancel}>取消</Btn><Btn onClick={()=>onSave(f)} disabled={!f.name.trim()}>保存</Btn></div></div>;}
-function ResForm({res,staff,onSave,onCancel}){const[f,setF]=useState(res);return<div><Input label="名称" value={f.name} onChange={e=>setF({...f,name:e.target.value})}/><QuickSelect label="类型" options={RES_TYPES} value={f.type} onChange={v=>setF({...f,type:v})}/><QuickSelect label="平台" options={[{v:"",l:"无"},{v:"抖音",l:"抖音"},{v:"小红书",l:"小红书"},{v:"微信公众号",l:"微信公众号"},{v:"微信视频号",l:"微信视频号"},{v:"大众点评",l:"大众点评"},{v:"美团",l:"美团"},{v:"饿了么",l:"饿了么"},{v:"快手",l:"快手"},{v:"微博",l:"微博"}]} value={f.platform||""} onChange={v=>setF({...f,platform:v})}/><QuickSelect label="负责人" options={staff.map(s=>({v:s.id,l:s.name}))} value={f.owner} onChange={v=>setF({...f,owner:v})}/><div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><Btn v="secondary" onClick={onCancel}>取消</Btn><Btn onClick={()=>onSave(f)} disabled={!f.name.trim()}>保存</Btn></div></div>;}
+function CatForm({cat,customTags,onSave,onCancel}){
+  const[f,setF]=useState(cat);
+  const tags=customTags||INITIAL_TAGS;
+  return<div>
+    <Input label="名称" value={f.name} onChange={e=>setF({...f,name:e.target.value})}/>
+    <div style={{marginBottom:14}}>
+      <label style={{display:"block",fontSize:12,fontWeight:600,color:T.text2,marginBottom:6}}>标签</label>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+        {tags.map(t=>{const sel=f.cat===t.name;return(
+          <button key={t.id} onClick={()=>setF({...f,cat:t.name})} style={{padding:"5px 12px",borderRadius:20,fontSize:12,fontWeight:600,border:sel?`2px solid ${t.color}`:`1.5px solid ${T.border}`,background:sel?t.color+"22":T.card,color:sel?t.color:T.text3,cursor:"pointer",display:"flex",alignItems:"center",gap:4,transition:T.transition,boxShadow:sel?`0 0 0 2px ${t.color}30`:"none"}}>
+            <span style={{width:7,height:7,borderRadius:"50%",background:t.color,display:"inline-block"}}/>
+            {t.name}
+          </button>
+        );})}
+      </div>
+    </div>
+    <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><Btn v="secondary" onClick={onCancel}>取消</Btn><Btn onClick={()=>onSave(f)} disabled={!f.name.trim()}>保存</Btn></div>
+  </div>;
+}
+function ResForm({res,staff,onSave,onCancel}){const[f,setF]=useState(res);return<div><Input label="名称" value={f.name} onChange={e=>setF({...f,name:e.target.value})}/><QuickSelect label="类型" options={RES_TYPES} value={f.type} onChange={v=>setF({...f,type:v})}/><QuickSelect label="平台" options={[{v:"",l:"无"},...PLATFORMS.map(p=>({v:p,l:p}))]} value={f.platform||""} onChange={v=>setF({...f,platform:v})}/><QuickSelect label="负责人" options={staff.map(s=>({v:s.id,l:s.name}))} value={f.owner} onChange={v=>setF({...f,owner:v})}/><div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><Btn v="secondary" onClick={onCancel}>取消</Btn><Btn onClick={()=>onSave(f)} disabled={!f.name.trim()}>保存</Btn></div></div>;}
 function ActForm({act,staff,onSave,onCancel,allActions=[]}){
   const[f,setF]=useState({actionPriority:2,dependsOn:[],attachments:[],...act});
   const[newLink,setNewLink]=useState("");
