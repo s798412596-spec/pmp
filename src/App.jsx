@@ -979,7 +979,7 @@ ${projSummary}
 ${staffMapping}
 
 ## 约束
-- 类别标签(cat): ${(data.customTags||INITIAL_TAGS).map(t=>t.name).join(", ")}
+- 类别标签(cat): ${(data.customTags&&data.customTags.length>0?data.customTags:INITIAL_TAGS).map(t=>t.name).join(", ")}
 - 资源类型(type): account(平台账号), store(店铺), channel(私域触点), live(直播频道), ad_account(广告账户), kol(KOL达人), creative(创意素材), document(文档方案), data(数据看板), event(活动会议), other(其他)
 - 平台: ${PLATFORMS.join(", ")}（或留空）
 - 动作类型(aType): recurring(周期性) / once(一次性)
@@ -2349,7 +2349,7 @@ function ProjectsView({data,save,auditLog,user,showHidden}){
     save({...data,customTags:newTags,projects:newProjects});
     setTagEdit(null);
   };
-  const delTag=(tagId)=>{const tag=customTags.find(t=>t.id===tagId);const inUse=projects.some(p=>(p.categories||[]).some(c=>c.cat===tag?.name));if(inUse&&!confirm(`标签"${tag?.name}"正在被类别使用，删除后相关类别标签将显示为灰色，确定继续？`))return;save({...data,customTags:customTags.filter(t=>t.id!==tagId)});};
+  const delTag=(tagId)=>{const tag=customTags.find(t=>t.id===tagId);if(customTags.length<=1){alert("至少需要保留一个标签");return;}const inUse=projects.some(p=>(p.categories||[]).some(c=>c.cat===tag?.name));if(inUse&&!confirm(`标签"${tag?.name}"正在被类别使用，删除后相关类别标签将显示为灰色，确定继续？`))return;save({...data,customTags:customTags.filter(t=>t.id!==tagId)});};
 
   const logAction = (action, type, name, details={}) => {
     if (auditLog && user) auditLog.addLog(user.id, user.name, action, type, name, details);
