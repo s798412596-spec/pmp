@@ -9,6 +9,7 @@ const corsHeaders = {
 const COMMANDER_TIMEOUT_MS = 10000;
 const ARCHITECT_TIMEOUT_MS = 45000;
 const ANALYST_TIMEOUT_MS = 20000;
+const TAG_ANALYZER_TIMEOUT_MS = 15000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -168,6 +169,33 @@ function applyHoursToOps(operations: any[], hourUpdates: Array<{ actionName: str
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Tag Analyzer helpers ──────────────────────────────────────────────────────
+// Collect all new category names from an operations array (add_category + nested in add_project).
+function collectNewCategoryNames(operations: any[]): string[] {
+  const names: string[] = [];
+  for (const op of operations || []) {
+    if (op.type === "add_category" && op.category?.name) names.push(op.category.name);
+    if (op.type === "add_project" && Array.isArray(op.categories)) {
+      for (const c of op.categories) { if (c.name) names.push(c.name); }
+    }
+  }
+  return [...new Set(names)];
+}
+
+// Build the Tag Analyzer system prompt (used inline — no frontend round-trip needed).
+function buildTagAnalyzerSystem(): string {
+  return `你是「会议解析者」，负责为本次新增的业务类别自动匹配或创建标签。
+
+规则：
+1. 优先复用现有标签：类别名/内容与已有标签语义相近时直接assign，不新建重复标签
+2. 仅当业务类型确实全新（与所有现有标签均不相近）时，才新建标签（add_tag）
+3. 每个新增类别必须被分配到恰好一个标签（assign_tag），不得遗漏
+4. 新标签颜色从以下10色中选最合适的：#007AFF(蓝), #34C759(绿), #FF9500(橙), #FF3B30(红), #AF52DE(紫), #5AC8FA(浅蓝), #FF2D55(粉), #FFCC00(黄), #30B0C7(青绿), #A2845E(棕)
+5. add_tag 必须在对应 assign_tag 之前出现
+6. 输出严格JSON，禁用markdown代码块：{"tagOps":[{"type":"add_tag","tag":{"name":"xxx","color":"#xxx"}},{"type":"assign_tag","categoryName":"xxx","tagName":"xxx"}]}`;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 // Build the project-detail supplement for one bucket's Architect call.
 // Returns a string block showing full L1→L2→L3→L4 for the target project.
 function buildProjectDetailBlock(project: any): string {
@@ -206,7 +234,7 @@ serve(async (req) => {
     //   system          — full L1+L2+L3+L4 prompt (buildSystemPrompt(false) on client)
     //   messages, provider, model only; no commanderSystem or projectsData sent
     // ─────────────────────────────────────────────────────────────────────────
-    const { system, messages, provider, model, agentMode, commanderSystem, projectsData, hoursAnalystSystem, bulkHoursMode, actionsList } = await req.json();
+    const { system, messages, provider, model, agentMode, commanderSystem, projectsData, hoursAnalystSystem, bulkHoursMode, actionsList, tagAnalyzerEnabled } = await req.json();
 
     // ── Bulk hours mode: skip Commander/Architect, run Analyst directly ───────
     if (bulkHoursMode && Array.isArray(actionsList) && actionsList.length > 0 && hoursAnalystSystem) {
@@ -428,6 +456,36 @@ serve(async (req) => {
         }
       } catch (e: any) {
         console.warn("Analyst failed (non-fatal):", e.message);
+      }
+    }
+    // ── Stage 4: Tag Analyzer (non-fatal, auto-enabled when tagAnalyzerEnabled provided) ──
+    // Triggers when client sends tagAnalyzerEnabled (customTags array) and there are
+    // new categories being created (add_category / add_project with categories) in this batch.
+    if (Array.isArray(tagAnalyzerEnabled)) {
+      try {
+        const tagParsed = tryParseJson(responseText);
+        if (tagParsed?.operations?.length > 0) {
+          const newCatNames = collectNewCategoryNames(tagParsed.operations);
+          if (newCatNames.length > 0) {
+            console.log(`TagAnalyzer: classifying ${newCatNames.length} new categories...`);
+            const existingTags: any[] = tagAnalyzerEnabled;
+            const tagSystem = buildTagAnalyzerSystem();
+            const tagMsg = `现有标签：${existingTags.length > 0 ? existingTags.map((t: any) => t.name).join("、") : "（无）"}\n本次新增类别：\n${newCatNames.map((n, i) => `${i + 1}. ${n}`).join("\n")}`;
+            const tagRaw = await withTimeout(
+              callLLM(activeProvider, model, tagSystem, [{ role: "user", content: tagMsg }], 1024),
+              TAG_ANALYZER_TIMEOUT_MS,
+              "TagAnalyzer",
+            );
+            const tagResult = tryParseJson(tagRaw);
+            if (Array.isArray(tagResult?.tagOps) && tagResult.tagOps.length > 0) {
+              tagParsed.operations.push(...tagResult.tagOps);
+              responseText = JSON.stringify(tagParsed);
+              console.log(`TagAnalyzer OK: ${tagResult.tagOps.length} tag ops added`);
+            }
+          }
+        }
+      } catch (e: any) {
+        console.warn("TagAnalyzer failed (non-fatal):", e.message);
       }
     }
     // ─────────────────────────────────────────────────────────────────────────

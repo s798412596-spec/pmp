@@ -1212,9 +1212,10 @@ ${catalog || "（暂无项目）"}
       const useAgent = agentMode && !isFollowUpRef.current;
       const COMMANDER_THRESHOLD = 400;
       const willUseCommander = useAgent && userText.length > COMMANDER_THRESHOLD;
+      const tagAnalyzerEnabled = data.customTags&&data.customTags.length>0?data.customTags:INITIAL_TAGS;
       const callOpts = useAgent
-        ? {agentMode:true, commanderSystem:buildCommanderPrompt(), projectsData:projects, ...(hoursAnalyst ? {hoursAnalystSystem:buildHoursAnalystPrompt()} : {})}
-        : {};
+        ? {agentMode:true, commanderSystem:buildCommanderPrompt(), projectsData:projects, ...(hoursAnalyst ? {hoursAnalystSystem:buildHoursAnalystPrompt()} : {}), tagAnalyzerEnabled}
+        : {tagAnalyzerEnabled};
 
       // ── Stage 3: agent/architect — force render BEFORE the fetch so this label is
       //    visible for the entire network wait ("request dispatched, AI processing") ──
@@ -1256,6 +1257,20 @@ ${catalog || "（暂无项目）"}
 
       let parsed;
       try {
+        parsed = parseAIResponse(raw);
+      } catch(e2) {
+        // fallthrough to error block below
+        parsed = null;
+      }
+
+      // ── Brief "tag_analyzer" stage display ──────────────────────────────────
+      if (parsed?.operations?.some(op=>op.type==="add_tag"||op.type==="assign_tag")) {
+        flushSync(() => setLoadingStage("tag_analyzer"));
+        await new Promise(r => setTimeout(r, 500));
+      }
+      if (safetyFired) return;
+
+      if (!parsed) try {
         parsed = parseAIResponse(raw);
       } catch(e2) {
         console.error("AI parse failed:", raw.slice(0, 300));
@@ -1312,6 +1327,7 @@ ${catalog || "（暂无项目）"}
   const applyOperations = (parsed) => {
     let newProjects = [...projects.map(p=>({...p,milestones:[...(p.milestones||[])],categories:(p.categories||[]).map(c=>({...c,resources:(c.resources||[]).map(r=>({...r,actions:[...(r.actions||[])]}))}))}))];
     let newRisks = [...(data.risks||[])];
+    let newCustomTags = [...(data.customTags&&data.customTags.length>0?data.customTags:INITIAL_TAGS)];
     const opNames = [];
 
     (parsed.operations||[]).forEach(op => {
@@ -1415,6 +1431,17 @@ ${catalog || "（暂无项目）"}
           })};
         });
       }
+      if (op.type === "add_tag" && op.tag?.name) {
+        const exists = newCustomTags.some(t=>t.name===op.tag.name);
+        if (!exists) {
+          newCustomTags.push({id:uid(), name:op.tag.name, color:op.tag.color||"#007AFF"});
+          opNames.push(`新标签: ${op.tag.name}`);
+        }
+      }
+      if (op.type === "assign_tag" && op.categoryName && op.tagName) {
+        newProjects = newProjects.map(p=>({...p,categories:(p.categories||[]).map(c=>c.name===op.categoryName?{...c,cat:op.tagName}:c)}));
+        opNames.push(`归类: ${op.categoryName}→${op.tagName}`);
+      }
     });
 
     // Apply milestones to existing projects
@@ -1430,7 +1457,7 @@ ${catalog || "（暂无项目）"}
       newRisks.push({id:uid(),projectId:r.projectId,name:r.name,impact:r.impact||2,probability:r.probability||2,status:"open",owner:user.id,mitigation:"",note:""});
     });
 
-    save({...data, projects: newProjects, risks: newRisks});
+    save({...data, projects: newProjects, risks: newRisks, customTags: newCustomTags});
     if (auditLog && user) {
       const hasDelete = (parsed.operations||[]).some(o=>o.type?.startsWith("delete"));
       const hasUpdate = (parsed.operations||[]).some(o=>o.type==="update_action");
@@ -1526,6 +1553,27 @@ ${catalog || "（暂无项目）"}
           <div style={{flex:1}}/><button onClick={()=>removeOp(idx)} style={{background:"none",border:"none",color:T.danger,cursor:"pointer",padding:4}}><X size={12}/></button>
         </div>
         <div style={{fontSize:11,color:T.text2,marginTop:4,paddingLeft:22}}>{fields}</div>
+      </div>;
+    }
+    if(op.type==="add_tag"&&op.tag?.name){const tc=op.tag.color||"#007AFF";
+      return<div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:T.borderLight,borderRadius:T.radiusSm,borderLeft:`3px solid ${tc}`}}>
+        <Tag size={14} color={tc}/>
+        <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:T.text1}}>新标签: {op.tag.name}</div>
+          <div style={{fontSize:11,color:T.text3}}>会议解析者自动创建</div>
+        </div>
+        <span style={{width:16,height:16,borderRadius:4,background:tc,display:"inline-block",flexShrink:0}}/>
+        <button onClick={()=>removeOp(idx)} style={{background:"none",border:"none",color:T.danger,cursor:"pointer",padding:4}}><X size={12}/></button>
+      </div>;
+    }
+    if(op.type==="assign_tag"&&op.categoryName&&op.tagName){
+      const tc=getCatColor(op.tagName,data.customTags);
+      return<div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:T.borderLight,borderRadius:T.radiusSm,borderLeft:`3px solid ${tc}`}}>
+        <Tag size={14} color={tc}/>
+        <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:T.text1}}>归类: {op.categoryName}</div>
+          <div style={{fontSize:11,color:T.text3}}>自动归入标签 <span style={{color:tc,fontWeight:600}}>{op.tagName}</span></div>
+        </div>
+        <Badge color={tc} small>{op.tagName}</Badge>
+        <button onClick={()=>removeOp(idx)} style={{background:"none",border:"none",color:T.danger,cursor:"pointer",padding:4}}><X size={12}/></button>
       </div>;
     }
     return null;
@@ -1693,8 +1741,9 @@ ${catalog || "（暂无项目）"}
             :loadingStage==="sending"  ? "📡 正在连接AI服务..."
             :loadingStage==="agent"    ? "📋 总指挥协调中，AI处理中..."
             :loadingStage==="architect"? "⚙️ AI已接收，正在处理..."
-            :loadingStage==="analyst"  ? "⏱️ 工时分析者正在评估..."
-            :                           "AI 分析中"}
+            :loadingStage==="analyst"      ? "⏱️ 工时分析者正在评估..."
+            :loadingStage==="tag_analyzer" ? "🏷️ 标签解析者归类中..."
+            :                               "AI 分析中"}
           </span>
           <span style={{marginLeft:6,opacity:0.6,fontVariantNumeric:"tabular-nums"}}>({loadingElapsed}s)</span>
         </div>
