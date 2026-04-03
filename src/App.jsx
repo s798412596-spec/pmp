@@ -1435,10 +1435,11 @@ ${catalog || "（暂无项目）"}
         });
       }
       if (op.type === "add_tag" && op.tag?.name) {
-        const exists = newCustomTags.some(t=>t.name===op.tag.name);
-        if (!exists) {
-          newCustomTags.push({id:uid(), name:op.tag.name, color:op.tag.color||"#007AFF"});
-          opNames.push(`新标签: ${op.tag.name}`);
+        const normalized = op.tag.name.trim();
+        const exists = newCustomTags.some(t=>t.name.trim().toLowerCase()===normalized.toLowerCase());
+        if (!exists && normalized) {
+          newCustomTags.push({id:uid(), name:normalized, color:op.tag.color||"#007AFF"});
+          opNames.push(`新标签: ${normalized}`);
         }
       }
       if (op.type === "assign_tag" && op.tagName && (op.categoryId || op.categoryName)) {
