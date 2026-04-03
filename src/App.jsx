@@ -1570,7 +1570,9 @@ ${catalog || "（暂无项目）"}
       </div>;
     }
     if(op.type==="assign_tag"&&op.categoryName&&op.tagName){
-      const tc=getCatColor(op.tagName,data.customTags);
+      // Resolve color: check pending add_tag ops in same batch first, then customTags
+      const pendingAddTag=pendingOps?.operations?.find(o=>o.type==="add_tag"&&o.tag?.name===op.tagName);
+      const tc=pendingAddTag?.tag?.color||getCatColor(op.tagName,data.customTags);
       return<div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:T.borderLight,borderRadius:T.radiusSm,borderLeft:`3px solid ${tc}`}}>
         <Tag size={14} color={tc}/>
         <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:T.text1}}>归类: {op.categoryName}</div>
