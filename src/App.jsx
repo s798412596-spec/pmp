@@ -1182,19 +1182,19 @@ ${catalog || "（暂无项目）"}
       const savedModel = aiConfig.model||"";
       const model = (validModels.length>0&&savedModel&&!validModels.includes(savedModel))?validModels[0]:savedModel;
 
-      // Verify the user has an active session (capped at 5s to avoid hanging when
-      // Supabase is slow). The edge function itself uses ANON_KEY — this check is
-      // purely to confirm the user is logged in before dispatching the request.
+      // Verify the user has an active session (capped at 15s to avoid hanging when
+      // Supabase is slow or token refresh is triggered). The edge function itself
+      // uses ANON_KEY — this check is purely to confirm the user is logged in.
       let isLoggedIn = false;
       try {
         const authResult = await Promise.race([
           supabase.auth.getSession(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("auth_timeout")), 5000)),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("auth_timeout")), 15000)),
         ]);
         isLoggedIn = !!authResult?.data?.session?.access_token;
       } catch (authErr) {
         throw new Error(authErr.message === "auth_timeout"
-          ? "__auth__:身份验证超时（5秒），请刷新页面后重试"
+          ? "__auth__:网络较慢，身份验证超时（15秒），请稍候片刻后重试"
           : "__auth__:身份验证失败，请重新登录后再使用AI助手");
       }
       if (!isLoggedIn) throw new Error("__auth__:请先登录后再使用AI助手");
