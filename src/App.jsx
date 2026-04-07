@@ -7,7 +7,7 @@ import {
   CircleDot, Smartphone, Store, MessageCircle, Radio, Pin, RefreshCw, Target, Clock,
   FileText, AlertCircle, Bot, Send, Loader2, Copy, ListTodo,
   UserCircle, Phone, Star, Search, CalendarClock, TrendingUp,
-  ShieldAlert, History, CalendarCheck, Filter, Download, TriangleAlert, LogOut,
+  ShieldAlert, History, CalendarCheck, Filter, Download, TriangleAlert, LogOut, Bell,
   GitBranch, Milestone, GanttChartSquare, AlertOctagon, Link2, Paperclip, Eye,
   Lock, UserPlus, KeyRound, ShieldCheck, Upload, FolderArchive, FileCheck, FileX, FileClock,
   ArrowUpFromLine, FolderOpen, Image, FileVideo, FileAudio, File, EyeOff, Menu, Tag,
@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import { supabase, TABLE } from "./supabase.js";
 import React from "react";
+import { exportToCSV, exportStaffCSV, exportFullBackup, generateWeeklyReport, autoBackupToLocalStorage, getBackupHistory } from "./utils/helpers.js";
+import { generateNotifications, getReadIds, markAllRead } from "./utils/notifications.js";
 
 // ─── Error Boundary for view sections ─────
 class ErrorBoundary extends React.Component {
@@ -1454,6 +1456,20 @@ ${catalog || "（暂无项目）"}
             })};
           })};
         });
+        if (count === 0 && op.actionId) {
+          newProjects = newProjects.map(p => {
+            return {...p, categories: (p.categories||[]).map(c => {
+              return {...c, resources: (c.resources||[]).map(r => {
+                return {...r, actions: (r.actions||[]).map(a => {
+                  if(a.id!==op.actionId||!a.deadline||a.aType!=="once")return a;
+                  const[y,m,day]=a.deadline.split("-").map(Number);
+                  const d=new Date(y,m-1,day+op.days);
+                  return{...a,deadline:`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`};
+                })};
+              })};
+            })};
+          });
+        }
         opNames.push(`延期${op.days}天: ${op.actionName}${op.staffName?` (${op.staffName})`:""}`);
       }
       if (op.type === "add_tag" && op.tag?.name) {
@@ -2083,9 +2099,12 @@ function RecurringTasksView({ data, save, user, taskInstancesHook, auditLog }) {
 // ═══════════════════════════════════════════
 function EmployeeApp({data,user,save,syncStatus,auditLog,taskInstancesHook,deliverablesHook,onLogout}) {
   const [view,setView]=useState("mytasks");const isMobile=useIsMobile();const[sidebarOpen,setSidebarOpen]=useState(false);
+  const [notifOpen,setNotifOpen]=useState(false);const [readIds,setReadIds]=useState(()=>getReadIds());
   const {projects,staff}=data;
   const allActions=getAllActions(projects);
   const myActions=allActions.filter(a=>a.staffId===user.id);
+  const notifications=useMemo(()=>generateNotifications(data,user?.id),[data,user?.id]);
+  const unreadCount=notifications.filter(n=>!readIds.includes(n.id)).length;
   const doneCount=myActions.filter(a=>a.progress===2).length;
 
   const updateProgress=(actionId)=>{
@@ -2175,6 +2194,12 @@ function EmployeeApp({data,user,save,syncStatus,auditLog,taskInstancesHook,deliv
           <Avatar name={user.name} color={user.color||T.accent} size={32}/>
           <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:T.text1}}>{user.name}</div><div style={{fontSize:10,color:T.text3}}>{user.role}</div></div>
           <SyncBadge status={syncStatus} onSync={() => save(data)} />
+          <div style={{position:"relative"}}>
+            <button onClick={()=>setNotifOpen(o=>!o)} title="通知" style={{position:"relative",background:T.borderLight,border:"none",width:28,height:28,borderRadius:14,cursor:"pointer",color:notifOpen?T.accent:T.text3,display:"flex",alignItems:"center",justifyContent:"center",transition:T.transition,flexShrink:0}}>
+              <Bell size={14}/>
+              {unreadCount>0&&<span style={{position:"absolute",top:-2,right:-2,background:T.danger,color:"#fff",fontSize:8,fontWeight:700,borderRadius:8,padding:"1px 4px",minWidth:14,textAlign:"center"}}>{unreadCount}</span>}
+            </button>
+          </div>
           <button onClick={onLogout} title="退出登录" style={{background:T.borderLight,border:"none",width:28,height:28,borderRadius:14,cursor:"pointer",color:T.text3,display:"flex",alignItems:"center",justifyContent:"center",transition:T.transition,flexShrink:0}} onMouseEnter={e=>e.target.style.color=T.danger} onMouseLeave={e=>e.target.style.color=T.text3}><LogOut size={14}/></button>
         </div>
       </div>
@@ -2182,6 +2207,24 @@ function EmployeeApp({data,user,save,syncStatus,auditLog,taskInstancesHook,deliv
 
   return<div style={{display:"flex",minHeight:"100vh",fontFamily:T.font,background:T.bg}}>
     <GlobalStyles/>
+    {notifOpen&&<div style={{position:"fixed",inset:0,zIndex:199}} onClick={()=>setNotifOpen(false)}/>}
+    {notifOpen&&<div style={{position:"fixed",bottom:72,left:16,width:300,maxHeight:400,background:"#fff",borderRadius:12,boxShadow:"0 8px 32px rgba(0,0,0,0.12)",border:`1px solid ${T.border}`,zIndex:200,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+      <div style={{padding:"12px 16px",borderBottom:`1px solid ${T.borderLight}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <span style={{fontWeight:700,fontSize:13,color:T.text1}}>通知{unreadCount>0?` (${unreadCount}条未读)`:""}</span>
+        {notifications.length>0&&<button onClick={()=>{markAllRead();setReadIds(notifications.map(n=>n.id));}} style={{background:"none",border:"none",fontSize:11,color:T.accent,cursor:"pointer",padding:0}}>全部已读</button>}
+      </div>
+      <div style={{overflowY:"auto",flex:1}}>
+        {notifications.length===0&&<div style={{padding:32,textAlign:"center",color:T.text3,fontSize:12}}>暂无通知</div>}
+        {notifications.map(n=>{const unread=!readIds.includes(n.id);const col=n.level==="danger"?T.danger:n.level==="warning"?T.warning:T.accent;return<div key={n.id} style={{padding:"10px 16px",borderBottom:`1px solid ${T.borderLight}`,background:unread?"#F0F9FF":"#fff"}}>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:2}}>
+            <span style={{width:6,height:6,borderRadius:3,background:col,flexShrink:0}}/>
+            <span style={{fontSize:11,fontWeight:700,color:col}}>{n.title}</span>
+            <span style={{fontSize:10,color:T.text3,marginLeft:"auto"}}>{n.project}</span>
+          </div>
+          <div style={{fontSize:12,color:T.text2,paddingLeft:12}}>{n.body}</div>
+        </div>;})}
+      </div>
+    </div>}
     {/* Mobile header bar */}
     {isMobile&&<div style={{position:"fixed",top:0,left:0,right:0,zIndex:50,background:T.sidebar,borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",padding:"10px 16px",gap:12,boxShadow:T.shadow}}>
       <button onClick={()=>setSidebarOpen(true)} style={{background:"none",border:"none",cursor:"pointer",color:T.text1,padding:4,display:"flex"}}><Menu size={22}/></button>
@@ -2248,6 +2291,7 @@ const ADMIN_NAV=[
   {id:"deliverables",icon:FolderArchive,label:"交付管理"},
   {id:"staff",icon:Users,label:"人员管理"},
   {id:"audit",icon:History,label:"操作审计"},
+  {id:"export",icon:Download,label:"数据导出"},
 ];
 
 function GlobalSearchBar({data,onNavigate}){
@@ -2301,6 +2345,10 @@ function GlobalSearchBar({data,onNavigate}){
 
 function AdminApp({data,user,save,syncStatus,auditLog,taskInstancesHook,deliverablesHook,onLogout}) {
   const[view,setView]=useState("overview");const[showHidden,setShowHidden]=useState(false);const isMobile=useIsMobile();const[sidebarOpen,setSidebarOpen]=useState(false);
+  const [notifOpen,setNotifOpen]=useState(false);const [readIds,setReadIds]=useState(()=>getReadIds());
+  const notifications=useMemo(()=>generateNotifications(data,null),[data]);
+  const unreadCount=notifications.filter(n=>!readIds.includes(n.id)).length;
+  useEffect(()=>{ autoBackupToLocalStorage(data); },[data]);
   const handleSearchNav=(type,id)=>{
     if(type==="action"||type==="project")setView("taskfilter");
     else if(type==="staff")setView("staff");
@@ -2328,6 +2376,12 @@ function AdminApp({data,user,save,syncStatus,auditLog,taskInstancesHook,delivera
           <Avatar name={user.name} color={user.color||T.accent} size={32}/>
           <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:T.text1}}>{user.name}</div><div style={{fontSize:10,color:T.text3}}>{user.role} · 管理员</div></div>
           <SyncBadge status={syncStatus} onSync={() => save(data)} />
+          <div style={{position:"relative"}}>
+            <button onClick={()=>setNotifOpen(o=>!o)} title="通知" style={{position:"relative",background:T.borderLight,border:"none",width:28,height:28,borderRadius:14,cursor:"pointer",color:notifOpen?T.accent:T.text3,display:"flex",alignItems:"center",justifyContent:"center",transition:T.transition,flexShrink:0}}>
+              <Bell size={14}/>
+              {unreadCount>0&&<span style={{position:"absolute",top:-2,right:-2,background:T.danger,color:"#fff",fontSize:8,fontWeight:700,borderRadius:8,padding:"1px 4px",minWidth:14,textAlign:"center"}}>{unreadCount}</span>}
+            </button>
+          </div>
           <button onClick={onLogout} title="退出登录" style={{background:T.borderLight,border:"none",width:28,height:28,borderRadius:14,cursor:"pointer",color:T.text3,display:"flex",alignItems:"center",justifyContent:"center",transition:T.transition,flexShrink:0}} onMouseEnter={e=>e.target.style.color=T.danger} onMouseLeave={e=>e.target.style.color=T.text3}><LogOut size={14}/></button>
         </div>
       </div>
@@ -2335,6 +2389,24 @@ function AdminApp({data,user,save,syncStatus,auditLog,taskInstancesHook,delivera
 
   return<div style={{display:"flex",minHeight:"100vh",fontFamily:T.font,background:T.bg}}>
     <GlobalStyles/>
+    {notifOpen&&<div style={{position:"fixed",inset:0,zIndex:199}} onClick={()=>setNotifOpen(false)}/>}
+    {notifOpen&&<div style={{position:"fixed",bottom:72,left:16,width:300,maxHeight:400,background:"#fff",borderRadius:12,boxShadow:"0 8px 32px rgba(0,0,0,0.12)",border:`1px solid ${T.border}`,zIndex:200,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+      <div style={{padding:"12px 16px",borderBottom:`1px solid ${T.borderLight}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <span style={{fontWeight:700,fontSize:13,color:T.text1}}>全局通知{unreadCount>0?` (${unreadCount}条未读)`:""}</span>
+        {notifications.length>0&&<button onClick={()=>{markAllRead();setReadIds(notifications.map(n=>n.id));}} style={{background:"none",border:"none",fontSize:11,color:T.accent,cursor:"pointer",padding:0}}>全部已读</button>}
+      </div>
+      <div style={{overflowY:"auto",flex:1}}>
+        {notifications.length===0&&<div style={{padding:32,textAlign:"center",color:T.text3,fontSize:12}}>暂无通知</div>}
+        {notifications.map(n=>{const unread=!readIds.includes(n.id);const col=n.level==="danger"?T.danger:n.level==="warning"?T.warning:T.accent;return<div key={n.id} style={{padding:"10px 16px",borderBottom:`1px solid ${T.borderLight}`,background:unread?"#F0F9FF":"#fff"}}>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:2}}>
+            <span style={{width:6,height:6,borderRadius:3,background:col,flexShrink:0}}/>
+            <span style={{fontSize:11,fontWeight:700,color:col}}>{n.title}</span>
+            <span style={{fontSize:10,color:T.text3,marginLeft:"auto"}}>{n.project}</span>
+          </div>
+          <div style={{fontSize:12,color:T.text2,paddingLeft:12}}>{n.body}</div>
+        </div>;})}
+      </div>
+    </div>}
     {/* Mobile header bar */}
     {isMobile&&<div style={{position:"fixed",top:0,left:0,right:0,zIndex:50,background:T.sidebar,borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",padding:"10px 16px",gap:12,boxShadow:T.shadow}}>
       <button onClick={()=>setSidebarOpen(true)} style={{background:"none",border:"none",cursor:"pointer",color:T.text1,padding:4,display:"flex"}}><Menu size={22}/></button>
@@ -2363,12 +2435,51 @@ function AdminApp({data,user,save,syncStatus,auditLog,taskInstancesHook,delivera
         {view==="deliverables"&&<DeliverablesView data={vData} user={user} deliverablesHook={deliverablesHook} auditLog={auditLog}/>}
         {view==="staff"&&<StaffView data={data} save={save} auditLog={auditLog} user={user}/>}
         {view==="audit"&&<AuditLogView auditLog={auditLog} staff={data.staff}/>}
+        {view==="export"&&<ExportView data={data}/>}
       </div></ErrorBoundary>;}catch(e){return<div style={{padding:40,textAlign:"center",color:"#EF4444"}}>渲染出错: {e.message}</div>;}})()}
     </main>
   </div>;
 }
 
-// ─── Overview ──────────────────────────
+// ─── Export View ──────────────────────────────────────────────────────────────
+function ExportView({data}){
+  const{projects,staff}=data;
+  const [backupHistory,setBackupHistory]=useState(()=>getBackupHistory());
+  const [msg,setMsg]=useState("");
+  const flash=(text)=>{setMsg(text);setTimeout(()=>setMsg(""),2500);};
+  const doExport=(fn)=>{try{fn();flash("导出成功");}catch(e){flash("导出失败: "+e.message);}};
+  const Card=({title,desc,children})=><div style={{background:"#fff",borderRadius:12,padding:24,boxShadow:"0 1px 3px rgba(0,0,0,0.06)",border:`1px solid ${T.border}`,marginBottom:20}}>
+    <div style={{marginBottom:16}}><div style={{fontSize:15,fontWeight:700,color:T.text1,marginBottom:4}}>{title}</div><div style={{fontSize:12,color:T.text3}}>{desc}</div></div>
+    {children}
+  </div>;
+  return<div style={{maxWidth:700}}>
+    <h2 style={{margin:"0 0 20px",fontSize:22,fontWeight:700,color:T.text1}}>数据导出</h2>
+    {msg&&<div style={{background:T.accentLight,color:T.accent,borderRadius:8,padding:"10px 16px",marginBottom:16,fontSize:13,fontWeight:600}}>{msg}</div>}
+    <Card title="任务数据" desc="导出所有项目的任务清单（CSV 格式，Excel 可直接打开）">
+      <button onClick={()=>doExport(()=>exportToCSV(data,staff))} style={{background:T.accent,color:"#fff",border:"none",borderRadius:8,padding:"10px 20px",fontSize:13,fontWeight:600,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:8,marginRight:8}}><Download size={14}/>导出任务 CSV</button>
+    </Card>
+    <Card title="员工数据" desc="导出员工信息及任务完成情况（CSV 格式）">
+      <button onClick={()=>doExport(()=>exportStaffCSV(staff,projects))} style={{background:T.teal,color:"#fff",border:"none",borderRadius:8,padding:"10px 20px",fontSize:13,fontWeight:600,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:8}}><Download size={14}/>导出员工 CSV</button>
+    </Card>
+    <Card title="完整备份" desc="导出所有数据的 JSON 备份文件，可用于数据迁移或恢复">
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <button onClick={()=>doExport(()=>exportFullBackup(data))} style={{background:T.purple,color:"#fff",border:"none",borderRadius:8,padding:"10px 20px",fontSize:13,fontWeight:600,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:8}}><Download size={14}/>导出完整 JSON 备份</button>
+        <button onClick={()=>doExport(()=>generateWeeklyReport(data))} style={{background:T.success,color:"#fff",border:"none",borderRadius:8,padding:"10px 20px",fontSize:13,fontWeight:600,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:8}}><Download size={14}/>导出周报 Markdown</button>
+      </div>
+    </Card>
+    <Card title="本地备份历史" desc={`最近 ${backupHistory.length} 条自动备份（存储于浏览器本地）`}>
+      {backupHistory.length===0&&<div style={{color:T.text3,fontSize:12}}>暂无本地备份</div>}
+      {backupHistory.map((b,i)=><div key={b.id} style={{display:"flex",alignItems:"center",gap:12,padding:"8px 0",borderBottom:i<backupHistory.length-1?`1px solid ${T.borderLight}`:"none"}}>
+        <div style={{flex:1}}>
+          <div style={{fontSize:12,fontWeight:600,color:T.text1}}>{new Date(b.savedAt).toLocaleString("zh-CN")}</div>
+          <div style={{fontSize:11,color:T.text3}}>{b.projectCount} 个项目 · {b.staffCount} 名员工</div>
+        </div>
+        <button onClick={()=>{const snap=b.snapshot||b.data;if(snap){const json=JSON.stringify({version:"2.0",exportedAt:b.savedAt,data:snap},null,2);const blob=new Blob([json],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`备份_${b.savedAt.slice(0,10)}.json`;a.click();URL.revokeObjectURL(url);}}} style={{background:T.borderLight,border:"none",borderRadius:6,padding:"6px 12px",fontSize:11,cursor:"pointer",color:T.text2}}>下载</button>
+      </div>)}
+    </Card>
+  </div>;
+}
+
 function OverviewView({data,save,auditLog,user}){
   const{projects,staff}=data;const actions=getAllActions(projects);
   const sorted=[...projects].sort((a,b)=>a.priority-b.priority);
