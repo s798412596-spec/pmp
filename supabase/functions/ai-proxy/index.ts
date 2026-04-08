@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -199,12 +200,58 @@ function buildProjectDetailBlock(project: any): string {
   return `    项目: "${project.name}" (id:${project.id})${cats ? `\n${cats}` : ""}`;
 }
 
+// ── Rate limiter (in-memory, 30 req / 60s per key) ───────────────────────────
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+const RATE_LIMIT = 30;
+const RATE_WINDOW_MS = 60_000;
+
+function checkRateLimit(key: string): boolean {
+  const now = Date.now();
+  let entry = rateLimitMap.get(key);
+  if (!entry || now >= entry.resetAt) {
+    entry = { count: 0, resetAt: now + RATE_WINDOW_MS };
+    rateLimitMap.set(key, entry);
+  }
+  entry.count++;
+  return entry.count <= RATE_LIMIT;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   const respond = (body: object, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   try {
+    // ── Hybrid auth: JWT primary, ANON_KEY fallback ───────────────────────────
+    const authHeader = req.headers.get("authorization") || "";
+    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+    let rateLimitKey = "anon";
+
+    if (token) {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+      const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+      const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
+
+      if (token === anonKey) {
+        // ANON_KEY path — allow as anonymous (frontend dev/prod path)
+        rateLimitKey = "anon";
+      } else if (supabaseUrl && serviceKey) {
+        // Try JWT verification
+        const sb = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+        const { data: { user }, error } = await sb.auth.getUser(token);
+        if (error || !user) {
+          return respond({ error: "鉴权失败，请重新登录" }, 401);
+        }
+        rateLimitKey = user.id;
+      }
+      // If no supabaseUrl/serviceKey configured, skip JWT check (dev environment)
+    }
+
+    if (!checkRateLimit(rateLimitKey)) {
+      return respond({ error: "请求过于频繁，请稍后再试（每分钟最多30次）" }, 429);
+    }
+    // ─────────────────────────────────────────────────────────────────────────
     // ── Request contract ──────────────────────────────────────────────────────
     // Bulk hours mode (bulkHoursMode=true):
     //   bulkHoursMode     — true: skip Commander/Architect, run Analyst only
