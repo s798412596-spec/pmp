@@ -233,27 +233,28 @@ serve(async (req) => {
       return respond({ error: "未提供认证信息" }, 401);
     }
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
 
-    // Stage 1: try JWT verification (primary path)
-    if (supabaseUrl && serviceKey) {
-      const sb = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
-      const { data: { user } } = await sb.auth.getUser(token);
-      if (user) {
-        rateLimitKey = user.id;
-      } else if (anonKey && token === anonKey) {
-        // Stage 2: ANON_KEY fallback (frontend/dev path)
-        rateLimitKey = "anon";
-      } else {
-        return respond({ error: "鉴权失败，请重新登录" }, 401);
-      }
-    } else if (anonKey && token === anonKey) {
-      // Env vars not configured — only ANON_KEY is accepted
+    // Stage 1: ANON_KEY fast path (string match, O(1), no network call)
+    if (anonKey && token === anonKey) {
       rateLimitKey = "anon";
     } else {
-      return respond({ error: "服务端鉴权配置缺失，请联系管理员" }, 401);
+      // Stage 2: try JWT verification for authenticated users
+      const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+      const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+      if (!supabaseUrl || !serviceKey) {
+        return respond({ error: "服务端鉴权配置缺失，请联系管理员" }, 401);
+      }
+      try {
+        const sb = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+        const { data: { user }, error } = await sb.auth.getUser(token);
+        if (error || !user) {
+          return respond({ error: "鉴权失败，请重新登录" }, 401);
+        }
+        rateLimitKey = user.id;
+      } catch {
+        return respond({ error: "鉴权失败，请重新登录" }, 401);
+      }
     }
 
     if (!checkRateLimit(rateLimitKey)) {
