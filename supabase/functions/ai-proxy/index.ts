@@ -228,24 +228,29 @@ serve(async (req) => {
     const token = authHeader.replace(/^Bearer\s+/i, "").trim();
     let rateLimitKey = "anon";
 
-    if (token) {
+    // No token at all → reject
+    if (!token) {
+      return respond({ error: "未提供认证信息" }, 401);
+    }
+
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
+
+    if (token === anonKey) {
+      // ANON_KEY path — allow as anonymous (frontend dev/prod path)
+      rateLimitKey = "anon";
+    } else {
+      // Try JWT verification — fail closed if env vars are missing
       const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
       const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-      const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
-
-      if (token === anonKey) {
-        // ANON_KEY path — allow as anonymous (frontend dev/prod path)
-        rateLimitKey = "anon";
-      } else if (supabaseUrl && serviceKey) {
-        // Try JWT verification
-        const sb = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
-        const { data: { user }, error } = await sb.auth.getUser(token);
-        if (error || !user) {
-          return respond({ error: "鉴权失败，请重新登录" }, 401);
-        }
-        rateLimitKey = user.id;
+      if (!supabaseUrl || !serviceKey) {
+        return respond({ error: "服务端鉴权配置缺失，请联系管理员" }, 401);
       }
-      // If no supabaseUrl/serviceKey configured, skip JWT check (dev environment)
+      const sb = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+      const { data: { user }, error } = await sb.auth.getUser(token);
+      if (error || !user) {
+        return respond({ error: "鉴权失败，请重新登录" }, 401);
+      }
+      rateLimitKey = user.id;
     }
 
     if (!checkRateLimit(rateLimitKey)) {
