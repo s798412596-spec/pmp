@@ -233,24 +233,27 @@ serve(async (req) => {
       return respond({ error: "未提供认证信息" }, 401);
     }
 
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
 
-    if (token === anonKey) {
-      // ANON_KEY path — allow as anonymous (frontend dev/prod path)
-      rateLimitKey = "anon";
-    } else {
-      // Try JWT verification — fail closed if env vars are missing
-      const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
-      const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-      if (!supabaseUrl || !serviceKey) {
-        return respond({ error: "服务端鉴权配置缺失，请联系管理员" }, 401);
-      }
+    // Stage 1: try JWT verification (primary path)
+    if (supabaseUrl && serviceKey) {
       const sb = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
-      const { data: { user }, error } = await sb.auth.getUser(token);
-      if (error || !user) {
+      const { data: { user } } = await sb.auth.getUser(token);
+      if (user) {
+        rateLimitKey = user.id;
+      } else if (anonKey && token === anonKey) {
+        // Stage 2: ANON_KEY fallback (frontend/dev path)
+        rateLimitKey = "anon";
+      } else {
         return respond({ error: "鉴权失败，请重新登录" }, 401);
       }
-      rateLimitKey = user.id;
+    } else if (anonKey && token === anonKey) {
+      // Env vars not configured — only ANON_KEY is accepted
+      rateLimitKey = "anon";
+    } else {
+      return respond({ error: "服务端鉴权配置缺失，请联系管理员" }, 401);
     }
 
     if (!checkRateLimit(rateLimitKey)) {
