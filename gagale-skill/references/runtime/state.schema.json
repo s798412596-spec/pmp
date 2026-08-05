@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex/chat-persona-engine/runtime-state.schema.json",
+  "title": "Profile-isolated chat persona runtime state",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "profile_id",
+    "timezone",
+    "date",
+    "recent_context",
+    "development_ledger",
+    "persona_growth"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 2 },
+    "profile_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$" },
+    "timezone": { "type": "string", "minLength": 1 },
+    "date": { "type": "string", "format": "date" },
+    "time_band": { "enum": ["late_night", "morning", "daytime", "evening", "night"] },
+    "current_activity": { "type": "string" },
+    "recent_topics": { "type": "array", "items": { "type": "string" } },
+    "recent_reply_shapes": { "type": "array", "items": { "type": "string" } },
+    "recent_context": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["at", "direction", "text", "topics"],
+        "properties": {
+          "at": { "type": ["string", "null"] },
+          "direction": { "enum": ["inbound", "outbound"] },
+          "text": { "type": "string" },
+          "topics": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "development_ledger": { "type": "object" },
+    "persona_growth": { "type": "object" }
+  },
+  "additionalProperties": true
+}

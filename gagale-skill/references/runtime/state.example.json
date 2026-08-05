@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "profile_id": "example-profile",
+  "timezone": "Asia/Shanghai",
+  "date": "2026-08-05",
+  "weekday": "Wednesday",
+  "time_band": "daytime",
+  "calendar_label": "",
+  "current_activity": "daytime",
+  "next_activity": "evening",
+  "daily_visible_message_count": 0,
+  "fired_visible_slots": [],
+  "recent_topics": [],
+  "recent_reply_shapes": [],
+  "recent_context": [],
+  "development_ledger": {
+    "next_id": 1,
+    "candidates": [],
+    "confirmed": []
+  },
+  "persona_growth": {
+    "version": 1,
+    "bounded": {},
+    "history": []
+  }
+}

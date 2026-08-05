@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex/chat-persona-engine/profile.schema.json",
+  "title": "Private chat persona profile",
+  "type": "object",
+  "required": ["schema_version", "profile_id", "display_name", "status", "source", "speakers", "runtime", "paths", "knowledge_assembly"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "profile_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$" },
+    "display_name": { "type": "string", "minLength": 1 },
+    "status": {
+      "enum": ["awaiting_user_confirmation", "confirmed", "import_failed"]
+    },
+    "source": {
+      "type": "object",
+      "required": ["path", "format", "sha256", "immutable"],
+      "properties": {
+        "path": { "type": "string", "pattern": "^source/" },
+        "format": { "enum": ["docx", "txt", "md", "json", "jsonl", "csv"] },
+        "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+        "immutable": { "const": true }
+      },
+      "additionalProperties": false
+    },
+    "speakers": {
+      "type": "object",
+      "required": ["target", "user"],
+      "properties": {
+        "target": { "type": "string", "minLength": 1 },
+        "user": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "runtime": {
+      "type": "object",
+      "required": ["timezone", "capabilities"],
+      "properties": {
+        "timezone": { "type": "string", "minLength": 1 },
+        "locale": { "type": "string" },
+        "schedule_mode": { "type": "string" },
+        "capabilities": {
+          "type": "object",
+          "properties": {
+            "proactivity": { "type": "boolean" },
+            "care": { "type": "boolean" },
+            "curiosity": { "type": "boolean" },
+            "attachment": { "type": "boolean" },
+            "possessiveness": { "type": "boolean" },
+            "agency": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
+        "schedule": { "type": "array" },
+        "calendar": { "type": "object" },
+        "visible_slots": { "type": "array", "items": { "type": "string" } },
+        "visible_message_max": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "paths": {
+      "type": "object",
+      "required": ["knowledge", "corpus", "package", "state"],
+      "properties": {
+        "knowledge": { "type": "string" },
+        "corpus": { "type": "string" },
+        "package": { "type": "string" },
+        "state": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "knowledge_assembly": {
+      "type": "object",
+      "required": ["status", "files"],
+      "properties": {
+        "status": {
+          "enum": ["empty_until_user_confirmation", "assembled_from_confirmed_package"]
+        },
+        "files": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "assembled_at": { "type": "string", "format": "date-time" },
+        "manifest": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true
+}

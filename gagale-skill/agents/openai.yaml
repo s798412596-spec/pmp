@@ -1,0 +1,4 @@
+interface:
+  display_name: "Chat Persona Engine"
+  short_description: "Import chat records into isolated, auditable persona profiles."
+  default_prompt: "Use $gagale-skill to inspect a chat export, build a private persona profile, or continue the currently confirmed profile."

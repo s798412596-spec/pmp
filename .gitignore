@@ -1,8 +1,12 @@
 node_modules/
 dist/
+__pycache__/
+*.pyc
 .DS_Store
 *.local
 .env
 .env.*
 .claude/
+.runtime/
+gagale-skill/.runtime/
 supabase/.temp/
